@@ -1,0 +1,19 @@
+menu "USB lifecycle regression fixture"
+    config USB_TEST_DIRECT
+        bool "Application owns the TinyUSB task and descriptors"
+        default n
+    choice USB_TEST_HID_MODE
+        prompt "HID descriptor architecture"
+        default USB_TEST_KEYBOARD
+        config USB_TEST_KEYBOARD
+            bool "Boot-capable keyboard in Report protocol"
+        config USB_TEST_MOUSE
+            bool "Mouse"
+        config USB_TEST_SEPARATE
+            bool "Keyboard and mouse on separate interfaces"
+        config USB_TEST_SHARED
+            bool "Keyboard and mouse collections with distinct Report IDs"
+        config USB_TEST_MSC
+            bool "Shared HID interface and ESP-TinyUSB SPI flash storage"
+    endchoice
+endmenu

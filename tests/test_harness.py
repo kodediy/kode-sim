@@ -110,6 +110,21 @@ async def test_waiting_for_a_console_line_on_a_page_that_closed_raises():
         await runner.cleanup()
 
 
+@pytest.mark.parametrize("events", [("ready new", "boot new"), ("boot new", "ready new")])
+async def test_console_milestones_share_one_fresh_boot_window(events):
+    from types import SimpleNamespace
+
+    from emu_helpers import console_line
+    k = SimpleNamespace(console=["ready old", "boot old"], _eof=True,
+                        closed=lambda waiting: EOFError(waiting))
+    since = len(k.console)
+    k.console.extend(events)
+    assert await console_line(k, "^boot", 1, since=since) == "boot new"
+    assert await console_line(k, "^ready", 1, since=since) == "ready new"
+    with pytest.raises(EOFError):
+        await console_line(k, "^ready", 1, since=len(k.console))
+
+
 async def test_a_simulator_that_never_comes_up_is_killed(tmp_path):
     exe = _script(tmp_path, "hangs", "exec sleep 600")
     with pytest.raises(AssertionError, match="never came up") as e:
@@ -125,6 +140,52 @@ async def test_a_boot_that_never_comes_up_is_killed(tmp_path):
         await boot(exe, tmp_path, {"merged_bin": tmp_path / "m.bin", "elf": None}, timeout=0.5)
     s = e.value.sim
     assert s.proc.poll() is not None
+
+
+async def test_fake_startup_opens_control_and_chips_before_announcing_uart():
+    import socket
+    import sys
+    from contextlib import ExitStack
+    from pathlib import Path
+
+    with ExitStack() as reservations:
+        ports = {}
+        for name in ("uart1", "control", "cosim"):
+            listener = reservations.enter_context(socket.socket())
+            listener.bind(("127.0.0.1", 0))
+            ports[name] = listener.getsockname()[1]
+    arguments = [part for name, port in ports.items() for part in (f"--{name}-tcp", f"127.0.0.1:{port}")]
+    process = await asyncio.create_subprocess_exec(sys.executable, str(Path(__file__).with_name("fake_esp_emu.py")),
+                                                   *arguments, stdout=asyncio.subprocess.PIPE,
+                                                   stderr=asyncio.subprocess.PIPE)
+    writers = []
+    try:
+        assert await asyncio.wait_for(process.stdout.readline(), 5) == b"fake: up\n"
+        _, chips = await asyncio.open_connection("127.0.0.1", ports["cosim"])
+        writers.append(chips)
+        reader, control = await asyncio.open_connection("127.0.0.1", ports["control"])
+        writers.append(control)
+        control.write(b"ping\n")
+        await control.drain()
+        assert await asyncio.wait_for(reader.readline(), 5) == b"ok\n"
+        reader, uart = await asyncio.open_connection("127.0.0.1", ports["uart1"])
+        writers.append(uart)
+        decoder, frames = kd.Decoder(), []
+        while len(frames) < 2:
+            chunk = await asyncio.wait_for(reader.read(65536), 5)
+            assert chunk, "UART closed before its initial frames"
+            frames.extend(decoder.feed(chunk))
+        assert [kind for kind, _ in frames] == [kd.HELLO, kd.FB_RECT]
+        for writer in writers:
+            writer.close()
+            await writer.wait_closed()
+        assert await asyncio.wait_for(process.wait(), 5) == 0, (await process.stderr.read()).decode()
+    finally:
+        for writer in writers:
+            writer.close()
+        if process.returncode is None:
+            process.terminate()
+            await asyncio.wait_for(process.wait(), 5)
 
 
 # ---- which esp-emu --------------------------------------------------------------

@@ -181,12 +181,12 @@ async def frame_where(k: Kode, pred, timeout: float) -> tuple[int, bytes]:
     return await asyncio.wait_for(scan(), timeout)
 
 
-async def console_line(k: Kode, pattern: str, timeout: float) -> str:
-    """A console line matching @pattern, said since the page connected."""
+async def console_line(k: Kode, pattern: str, timeout: float, *, since: int = 0) -> str:
+    """A matching console line at or after @since in the page's journal."""
     rx = re.compile(pattern)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
-    seen = 0
+    seen = since
     while loop.time() < deadline:
         eof = k._eof                            # before the lines: what came before the close is in them
         lines = k.console[:]

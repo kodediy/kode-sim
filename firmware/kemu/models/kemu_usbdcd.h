@@ -32,6 +32,7 @@
 #define KEMU_USB_BUS_CABLE_IN  1U
 #define KEMU_USB_BUS_SUSPEND   2U
 #define KEMU_USB_BUS_RESUME    3U
+#define KEMU_USB_BUS_RESET     4U
 
 /* USB_DEV kinds (firmware -> Mac): what the device did to the bus */
 #define KEMU_USB_DEV_PULLUP     1U  /* a: 1 connected, 0 disconnected */

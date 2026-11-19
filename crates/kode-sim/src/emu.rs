@@ -145,11 +145,6 @@ pub async fn stop_all() {
     }
 }
 
-/// A port nobody listens on now.
-pub fn free_port() -> io::Result<u16> {
-    Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
-}
-
 /// esp-emu's user-mode network, with the Mac's localhost ports forwarded to
 /// the Kode Dot's (host, guest) - the only way in from the Mac. With
 /// `restrict` nothing goes out but DNS.
@@ -246,14 +241,17 @@ pub struct Wiring {
 /// from the moment it starts, from a thread of its own.
 pub async fn launch(cfg: &Launch, on_line: Arc<dyn Fn(String) + Send + Sync>) -> Result<(Arc<Emu>, Wiring), String> {
     let exe = ensure_esp_emu()?;
-    let port = free_port().map_err(|e| e.to_string())?;
-    let control = format!("127.0.0.1:{}", free_port().map_err(|e| e.to_string())?);
-    let cosim = format!("127.0.0.1:{}", free_port().map_err(|e| e.to_string())?);
-    // An esp-emu that is not there says so before the C5 is built for it.
+    // Keep simultaneous ephemeral-port allocations distinct until esp-emu starts.
+    let reserve = || TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string());
+    let uart_socket = reserve()?;
+    let control_socket = reserve()?;
+    let cosim_socket = reserve()?;
+    let port = uart_socket.local_addr().map_err(|e| e.to_string())?.port();
+    let control = control_socket.local_addr().map_err(|e| e.to_string())?.to_string();
+    let cosim = cosim_socket.local_addr().map_err(|e| e.to_string())?.to_string();
     if !exe.is_file() {
         return Err(format!("could not start {}: there is no such file", exe.display()));
     }
-    // The C5 first: the P4 connects to its socket as it boots.
     let c5 = if cfg.wifi { Some(start_c5(&exe, cfg).await?) } else { None };
     let sock = c5.as_ref().map(|c| c.scratch[0].clone());
     let (out_r, out_w) = io::pipe().map_err(|e| e.to_string())?;
@@ -284,6 +282,7 @@ pub async fn launch(cfg: &Launch, on_line: Arc<dyn Fn(String) + Send + Sync>) ->
     // One pipe for both, merged: a crash's last
     // lines come out in the order they were written.
     cmd.stdin(Stdio::piped()).stdout(out_w).stderr(out_w2).kill_on_drop(true);
+    drop((uart_socket, control_socket, cosim_socket));
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {

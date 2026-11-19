@@ -190,9 +190,10 @@ async def test_an_app_goes_home_to_kodeos_by_the_held_button_and_by_reset(exe, k
         await until(KODEOS_BOOTS)
 
         await install_and_boot_it()
+        reset_at = len(k.console)
         await k.send_json({"power": "reset"})
-        await until(KODEOS_BOOTS)
-        await until(r"kdrv\.apps apps region ready: 1 app")
+        await console_line(k, KODEOS_BOOTS, 60, since=reset_at)
+        await console_line(k, r"kdrv\.apps apps region ready: 1 app", 60, since=reset_at)
         assert k.alive(), k.state
     finally:
         await k.stop()
@@ -211,14 +212,15 @@ async def test_the_way_home_keeps_the_glass_lit(exe, kodeos, display_lvgl, tmp_p
         assert r.returncode == 0 and "installed" in r.stderr, r.stderr
         await until("LVGL running")
         await asyncio.sleep(2)
+        home_at = len(k.console)
         await k.send(kd.BUTTONS, bytes([kd.BTN_BOT]))
         await asyncio.sleep(1.0)
         await k.send(kd.BUTTONS, bytes([0]))
         line = await until(r"kaos\.display the restart: the glass")
         assert "stays lit" in line, "\n".join(l for l in k.console if "vsync" in l or "kdrv.display" in l)
-        await until(KODEOS_BOOTS)
+        await console_line(k, KODEOS_BOOTS, 60, since=home_at)
         k.backlog.clear()
-        await until(r"kdrv\.apps apps region ready")
+        await console_line(k, r"kdrv\.apps apps region ready", 60, since=home_at)
         screen = Screen()
         await collect(k, screen, 15)
         # The launcher after an app, a few icons on black: some 3 % lit.

@@ -119,7 +119,8 @@
   #motioncard .read { font: 11px/1.4 var(--mono); color: var(--muted); }
 
   /* ---- The computer on the USB cable (usbhost.rs) ---- */
-  #usbcard .st { font-weight: 600; } #usbcard .st.mounted, #usbcard .st.keyboard { color: #6fd08c; }
+  #usbcard .st { font-weight: 600; }
+  #usbcard .st.mounted, #usbcard .st.keyboard, #usbcard .st.mouse, #usbcard .st.hid { color: #6fd08c; }
   #usbcard .st.failed { color: var(--bad); } #usbcard .st.waiting, #usbcard .st.enumerating, #usbcard .st.ejected { color: var(--warn); }
   #usbcard .muted { color: var(--muted); font-size: 12px; }
   #usbcard ul { list-style: none; margin: 0; padding: 0; max-height: 120px; overflow: auto; font: 12px var(--mono); }
@@ -129,6 +130,19 @@
     min-height: 34px; max-height: 90px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; width: 100%; box-sizing: border-box; }
   #usblog { font: 11px/1.35 var(--mono); max-height: 110px; overflow: auto; white-space: pre-wrap; margin: 0; color: #cfcdc6; }
   #usbcard select { font: inherit; color: var(--text); background: #2c2e33; border: 1px solid var(--line); border-radius: 6px; }
+  #usbcard [hidden] { display: none; }
+  #usbcard .row { flex-wrap: wrap; }
+  #usbkbd, #usbmouse { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
+  #usbcard h3 { font-size: 13px; margin: 0 0 6px; }
+  #usbcard .hidread { font: 11px/1.5 var(--mono); white-space: pre-line; overflow-wrap: anywhere; margin: 6px 0; }
+  #usbkbdreports > div, #usbmousereports > div { border-left: 2px solid var(--line); padding-left: 8px; margin-top: 8px; }
+  #usbdesktop { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden;
+    border: 1px solid var(--line); border-radius: 6px; background: #18191c; }
+  #usbcursor { position: absolute; left: 0; top: 0; width: 1.2rem; height: 1.6rem; pointer-events: none; color: var(--accent); }
+  #usbcursor svg { display: block; width: 100%; height: 100%; }
+  #usbmousebuttons { display: flex; flex-wrap: wrap; gap: 6px; }
+  #usbmousebuttons > span { border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  #usbmousebuttons > .held { border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -192,11 +206,28 @@
           <button id="usbrand" title="Copia 1 MB de bytes aleatorios para medir la velocidad">Copiar 1 MB</button></div>
         <div class="row muted" id="usblast"></div>
       </div>
+      <div id="usbhidcaps" class="muted" hidden></div>
       <div id="usbkbd" hidden>
+        <h3>Teclado USB</h3>
         <div class="row"><span class="muted">El teclado escribe:</span><span style="flex:1"></span>
-          <select id="usblayout" title="Distribución del teclado del ordenador"><option value="es">ES</option><option value="us">US</option></select>
+          <select id="usblayout" aria-label="Distribución del teclado del ordenador" title="Distribución del teclado del ordenador"><option value="es">ES</option><option value="us">US</option></select>
           <button id="usbclear">Borrar</button></div>
-        <div class="row"><pre id="usbtyped"></pre></div>
+        <div class="row"><pre id="usbtyped" aria-label="Texto recibido del teclado USB"></pre></div>
+        <div id="usbkeys" class="hidread"></div>
+        <div id="usbmods" class="hidread"></div>
+        <div id="usbkbdinterfaces" class="muted"></div>
+        <div id="usbkbdreports" class="hidread"></div>
+      </div>
+      <div id="usbmouse" hidden>
+        <h3>Ratón USB · ordenador virtual</h3>
+        <div id="usbmouseinterfaces" class="muted"></div>
+        <div id="usbdesktop" role="img" aria-label="Escritorio del ordenador virtual" aria-describedby="usbmouseposition">
+          <span id="usbcursor" aria-hidden="true" hidden><svg viewBox="0 0 18 24"><path d="M1 1 L1 19 L6 15 L10 23 L14 21 L10 13 L17 13 Z" fill="currentColor" stroke="#e8e6e1" stroke-linejoin="round"/></svg></span>
+        </div>
+        <div id="usbmouseposition" class="hidread"></div>
+        <div id="usbmousebuttons" class="hidread" role="list" aria-label="Botones del ratón USB"></div>
+        <div id="usbmouseevents" class="hidread" role="status" aria-live="polite" aria-atomic="true"></div>
+        <div id="usbmousereports" class="hidread"></div>
       </div>
       <details class="row" style="margin-top:8px"><summary class="muted">Lo que hace el ordenador</summary><pre id="usblog"></pre></details>
     </div>

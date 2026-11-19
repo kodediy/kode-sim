@@ -55,6 +55,7 @@ import os
 import struct
 import sys
 import zlib
+from pathlib import Path
 
 import kd
 
@@ -83,17 +84,6 @@ async def main() -> int:
     async def on_client(reader, writer):
         if not conn.done():
             conn.set_result((reader, writer))
-
-    await asyncio.sleep(float(os.environ.get("FAKE_SLOW_START", "0")))   # a slow boot
-    server = await asyncio.start_server(on_client, host, int(port))
-    print("fake: up", flush=True)
-    if os.environ.get("FAKE_CRASH_AFTER"):
-        async def crash_later():
-            await asyncio.sleep(float(os.environ["FAKE_CRASH_AFTER"]))
-            print("Guru Meditation Error: Core 0 panic'ed", flush=True)
-            os._exit(1)
-        asyncio.create_task(crash_later())
-    reader, writer = await conn
 
     mode = ["kodeos"]
     app_name = os.environ.get("FAKE_APP_NAME", "app")
@@ -134,6 +124,7 @@ async def main() -> int:
         return None
 
     async def boot():
+        _, boot_writer = await conn
         # kodeOS, as it boots, adopts an app it finds in the mailbox.
         box = mailbox()
         if mode[0] == "kodeos" and box is not None and written.get(box, b"")[:1] == b"\xe9":
@@ -143,12 +134,11 @@ async def main() -> int:
             mode[0] = app_name
         print(f"I (629) app_init: Project name:     {mode[0]}", flush=True)
         if os.environ.get("FAKE_BOARD_IMAGE"):
-            return                      # no kemu: no HELLO, nothing on UART1
-        writer.write(kd.encode(kd.HELLO, struct.pack("<HHH", 1, 410, 502)))
-        writer.write(kd.encode(kd.FB_RECT, struct.pack("<HHHH", 0, 0, 2, 2) + b"\xff\xff" * 4))
-        await writer.drain()
-
-    await boot()
+            return
+        _, boot_writer = await conn
+        boot_writer.write(kd.encode(kd.HELLO, struct.pack("<HHH", 1, 410, 502)))
+        boot_writer.write(kd.encode(kd.FB_RECT, struct.pack("<HHHH", 0, 0, 2, 2) + b"\xff\xff" * 4))
+        await boot_writer.drain()
 
     if os.environ.get("FAKE_BOARD_IMAGE"):
         async def board_console():
@@ -329,8 +319,49 @@ async def main() -> int:
         khost, kport = args[args.index("--cosim-tcp") + 1].rsplit(":", 1)
         await asyncio.start_server(serve_chips, khost, int(kport))
 
-    kbd_config = bytes([9, 2, 34, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 1, 3, 1, 1, 0, 9, 0x21, 0x11, 1, 0, 1, 0x22, 63, 0,
-                        7, 5, 0x81, 3, 8, 0, 10])
+    # UART availability is the simulator's startup boundary: the chip and
+    # control listeners must already exist when it accepts that connection.
+    await asyncio.sleep(float(os.environ.get("FAKE_SLOW_START", "0")))
+    server = await asyncio.start_server(on_client, host, int(port))
+    print("fake: up", flush=True)
+    if os.environ.get("FAKE_CRASH_AFTER"):
+        async def crash_later():
+            await asyncio.sleep(float(os.environ["FAKE_CRASH_AFTER"]))
+            print("Guru Meditation Error: Core 0 panic'ed", flush=True)
+            os._exit(1)
+        asyncio.create_task(crash_later())
+    reader, writer = await conn
+    await boot()
+
+    descriptors = Path(__file__).parent / "fixtures" / "hid"
+    keyboard_report = bytes.fromhex((descriptors / "keyboard.hex").read_text())
+    mouse_report = bytes.fromhex((descriptors / "mouse.hex").read_text())
+    usb_mode = os.environ.get("FAKE_USB_MODE", "keyboard")
+    if usb_mode == "keyboard":
+        hid_interfaces = [(0, 0x81, keyboard_report, {"key": None}, 1, 1)]
+    elif usb_mode == "mouse":
+        hid_interfaces = [(3, 0x85, mouse_report, {"mouse": None}, 0, 0)]
+    elif usb_mode == "separate":
+        hid_interfaces = [(7, 0x86, mouse_report, {"mouse": None}, 0, 0),
+                          (4, 0x83, keyboard_report, {"key": None}, 0, 0)]
+    elif usb_mode == "shared":
+        report_ids = {"key": 37, "mouse": 193}
+        report = bytes([0x85, report_ids["key"]]) + keyboard_report + bytes([0x85, report_ids["mouse"]]) + mouse_report
+        hid_interfaces = [(6, 0x84, report, report_ids, 0, 0)]
+    else:
+        raise ValueError(f"unknown fake USB mode: {usb_mode}")
+    config = bytearray([9, 2, 0, 0, len(hid_interfaces), 1, 0, 0x80, 50])
+    report_descriptors = {}
+    report_sources = {}
+    for number, endpoint, report, ids, subclass, protocol in hid_interfaces:
+        config.extend([9, 4, number, 0, 1, 3, subclass, protocol, 0])
+        config.extend(bytes([9, 0x21, 0x11, 1, 0, 1, 0x22]) + len(report).to_bytes(2, "little"))
+        config.extend([7, 5, endpoint, 3, 64, 0, 10])
+        report_descriptors[number] = report
+        for name, report_id in ids.items():
+            report_sources[name] = endpoint, report_id
+    config[2:4] = len(config).to_bytes(2, "little")
+    kbd_config = bytes(config)
     kbd_device = bytes([18, 1, 0, 2, 0, 0, 0, 64, 0x6A, 0x30, 0x35, 0x12, 0, 1, 1, 2, 0, 1])
 
     def usb_in(ep, data):
@@ -350,9 +381,12 @@ async def main() -> int:
                 usb_in(0x80, d[i:i + 64])
             if len(d) % 64 == 0 and len(d) < wl:
                 usb_in(0x80, b"")
-        elif kind == 0x81 and req == 6:
-            d = bytes([5, 1, 9, 6, 0xA1, 1, 0xC0])[:wl]
-            usb_in(0x80, d)
+        elif kind == 0x81 and req == 6 and vtype == 0x22 and s[4] in report_descriptors:
+            d = report_descriptors[s[4]][:wl]
+            for i in range(0, len(d), 64):
+                usb_in(0x80, d[i:i + 64])
+            if len(d) % 64 == 0 and len(d) < wl:
+                usb_in(0x80, b"")
         elif kind in (0x00, 0x21):
             usb_in(0x80, b"")                                                      # status of a write
         else:
@@ -364,6 +398,8 @@ async def main() -> int:
             for t, p in d.feed(data):
                 if t == kd.CONSOLE_IN:
                     console.put_nowait(p)
+                elif t == kd.USB_BUS and p[0] == 4:
+                    pass                             # reset keeps the cable and pull-up
                 elif t == kd.USB_BUS:
                     print(f"usb bus {p[0]}", flush=True)
                     writer.write(kd.encode(kd.USB_DEV, bytes([1, 1 if p[0] == 1 else 0, 0, 0])))   # the pull-up
@@ -441,7 +477,14 @@ async def main() -> int:
                 print("spammed", flush=True)
             elif line.startswith("key "):                    # MODS KEY: a boot keyboard's report
                 mods, key = (int(x) for x in line.split()[1:3])
-                usb_in(0x81, bytes([mods, 0, key, 0, 0, 0, 0, 0]))
+                endpoint, report_id = report_sources["key"]
+                prefix = b"" if report_id is None else bytes([report_id])
+                usb_in(endpoint, prefix + bytes([mods, 0, key, 0, 0, 0, 0, 0]))
+            elif line.startswith("mouse "):
+                buttons, x, y, wheel = (int(x) for x in line.split()[1:5])
+                endpoint, report_id = report_sources["mouse"]
+                prefix = b"" if report_id is None else bytes([report_id])
+                usb_in(endpoint, prefix + struct.pack("Bbbb", buttons, x, y, wheel))
                 await writer.drain()
             elif line.startswith("cut "):                    # N: a frame a reset cuts short
                 writer.write(b"KD" + struct.pack("<BI", 0x12, int(line.split()[1])) + bytes(4))

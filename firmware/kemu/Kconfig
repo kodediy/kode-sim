@@ -1,0 +1,9 @@
+menu "Kode simulator"
+    config KEMU_USB_EVENT_STACK_SIZE
+        int "Virtual USB interrupt task stack size (bytes)"
+        default 4096
+        range 2048 65536
+        help
+            Stack for delivery of virtual DCD events to TinyUSB. The task
+            exists only after a USB device stack has been initialized.
+endmenu

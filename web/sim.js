@@ -64,6 +64,7 @@ function micWanted() {
 }
 
 function connect() {
+  usbHidReset();
   ws = new WebSocket(WS_URL);
   ws.binaryType = "arraybuffer";
   // The sound starts by itself where the browser lets it (kode-sim's own
@@ -78,6 +79,7 @@ function connect() {
   };
   ws.onclose = () => {
     micStop();
+    usbHidReset();
     if (state !== "busy") setState("off", "Sin conexión con kode-sim; reintentando…", true);
     setTimeout(connect, retryMs);
     retryMs = 1000;
@@ -86,6 +88,7 @@ function connect() {
 
 function onFrame(type, buf, off, len) {
   switch (type) {
+    case T.HELLO: case T.POWER_OFF: return usbHidReset();
     case T.FB_RECT: return drawRect(buf, off, len);
     case T.PANEL: return panel(new Uint8Array(buf, off, 2));
     case T.LED: return led(new Uint8Array(buf, off, 3));
@@ -113,13 +116,178 @@ function onJson(j) {
 
 const USB_STAGE = {
   no_cable: "sin cable", waiting: "cable conectado: nada responde", enumerating: "enumerando…",
-  mounted: "montado", keyboard: "teclado", ejected: "expulsado: ya se puede sacar el cable", failed: "falló",
+  mounted: "montado", keyboard: "teclado", mouse: "ratón", hid: "teclado y ratón",
+  ejected: "expulsado: ya se puede sacar el cable", failed: "falló",
 };
 let usbCable = false;
+let usbHidObserved = false;
+let usbMouseSources = new Map();
+let usbMousePosition = null;
+let usbMousePending = { x: 0, y: 0 };
+const USB_MODIFIERS = ["Ctrl izquierdo", "Mayús izquierda", "Alt izquierdo", "GUI izquierda",
+                       "Ctrl derecho", "Mayús derecha", "Alt derecho (AltGr)", "GUI derecha"];
 
 function usbCmd(c) { sendJson({ usb: c }); }
 
 function usbBytes(n) { return n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`; }
+
+function usbHex(n) { return `0x${n.toString(16).padStart(2, "0")}`; }
+function usbKeys(keys) { return `Teclas mantenidas (usos HID): ${keys.length ? keys.map(usbHex).join(", ") : "ninguna"}`; }
+function usbModifiers(mask) {
+  const names = USB_MODIFIERS.filter((_, bit) => mask & (1 << bit));
+  return `Modificadores: ${names.length ? names.join(", ") : "ninguno"} (${usbHex(mask)})`;
+}
+function usbSource(r) {
+  return `Interfaz ${r.interface} · EP ${usbHex(r.endpoint)} · ID ${r.report_id === null ? "sin ID" : r.report_id} · colección ${r.collection}`;
+}
+function usbInterfaces(u, kind) {
+  return u.interfaces.filter((i) => i.active && i[kind]).map((i) => {
+    const endpoints = i.endpoints.filter((e) => e.direction === "in" && e.transfer_type === 3).map((e) => usbHex(e.address));
+    const ids = i.reports.map((r) => r.report_id === null ? "sin ID" : r.report_id);
+    return `Interfaz ${i.number} · EP ${endpoints.join(", ")} · informes ${ids.join(", ")}`;
+  }).join("; ");
+}
+function usbButtonName(button) {
+  switch (button) {
+    case 1: return "Izquierdo";
+    case 2: return "Derecho";
+    case 3: return "Central";
+    default: return `Botón ${button}`;
+  }
+}
+function usbAxes(axes) {
+  return Object.entries(axes).map(([axis, value]) => `${axis.toUpperCase()} ${value}`).join(" · ") || "sin ejes";
+}
+function usbEdges(counts) {
+  return Object.entries(counts).map(([button, count]) => `${usbButtonName(Number(button))} +${count}`).join(", ") || "ninguna";
+}
+function usbCounterReset(before, mouse) {
+  return mouse.sequence < before.sequence || ["presses", "releases"].some((kind) =>
+    Object.entries(before[kind]).some(([button, count]) => count > (mouse[kind][button] ?? 0)));
+}
+function usbCounterDelta(current, previous) {
+  return Object.fromEntries(Object.entries(current).map(([key, count]) => [key, count - (previous[key] ?? 0)]).filter(([, count]) => count > 0));
+}
+function usbMouseReset() {
+  usbMouseSources.clear();
+  usbMousePosition = null;
+  usbMousePending = { x: 0, y: 0 };
+  $("usbcursor").hidden = true;
+  $("usbcursor").style.transform = "";
+  $("usbmouseposition").textContent = "Posición: sin datos";
+  $("usbmousebuttons").replaceChildren();
+  $("usbmouseevents").textContent = "Eventos nuevos: 0 · rueda relativa: 0";
+  $("usbmousereports").replaceChildren();
+}
+function usbHidReset() {
+  usbHidObserved = false;
+  usbMouseReset();
+  for (const id of ["usbkbd", "usbmouse", "usbhidcaps"]) $(id).hidden = true;
+  $("usbkeys").textContent = usbKeys([]);
+  $("usbmods").textContent = usbModifiers(0);
+  $("usbkbdreports").replaceChildren();
+  for (const id of ["usbkbdinterfaces", "usbmouseinterfaces", "usbhidcaps"]) $(id).textContent = "";
+}
+function usbMouseFit() {
+  if ($("usbmouse").hidden) return;
+  const area = $("usbdesktop"), cursor = $("usbcursor");
+  if (!area.clientWidth || !area.clientHeight) return;
+  cursor.hidden = false;
+  const maxX = Math.max(0, area.clientWidth - cursor.offsetWidth), maxY = Math.max(0, area.clientHeight - cursor.offsetHeight);
+  usbMousePosition ??= { x: maxX / 2, y: maxY / 2 };
+  usbMousePosition.x = Math.max(0, Math.min(maxX, usbMousePosition.x + usbMousePending.x));
+  usbMousePosition.y = Math.max(0, Math.min(maxY, usbMousePosition.y + usbMousePending.y));
+  usbMousePending = { x: 0, y: 0 };
+  cursor.style.transform = `translate(${usbMousePosition.x}px, ${usbMousePosition.y}px)`;
+  $("usbmouseposition").textContent = `Posición X ${usbMousePosition.x} · Y ${usbMousePosition.y}`;
+}
+function usbMousePanel(u) {
+  const reports = u.hid.reports.filter((r) => r.mouse !== null);
+  const restarted = reports.length > 0 && reports.every((r) => {
+    const before = usbMouseSources.get(JSON.stringify([r.interface, r.endpoint, r.report_id, r.collection]));
+    return before && usbCounterReset(before.mouse, r.mouse);
+  });
+  if (restarted || (usbMouseSources.size && !reports.length)) usbMouseReset();
+  const synchronize = !usbHidObserved || restarted;
+  const next = new Map();
+  for (const r of reports) {
+    const key = JSON.stringify([r.interface, r.endpoint, r.report_id, r.collection]);
+    const mouse = r.mouse, before = usbMouseSources.get(key);
+    const reset = before && usbCounterReset(before.mouse, mouse);
+    const fresh = !synchronize && !reset && (!before || mouse.sequence > before.mouse.sequence);
+    const delta = {}, presses = {}, releases = {};
+    let events = before && !reset ? before.events : 0, wheel = before && !reset ? before.wheel : 0;
+    let newPresses = before && !reset ? { ...before.presses } : {}, newReleases = before && !reset ? { ...before.releases } : {};
+    let last = before && !reset ? before.last : "Estado actual; sin eventos nuevos";
+    if (fresh) {
+      const count = mouse.sequence - (before ? before.mouse.sequence : 0);
+      events += count;
+      for (const [axis, total] of Object.entries(mouse.total)) delta[axis] = total - (before ? before.mouse.total[axis] ?? 0 : 0);
+      Object.assign(presses, usbCounterDelta(mouse.presses, before ? before.mouse.presses : {}));
+      Object.assign(releases, usbCounterDelta(mouse.releases, before ? before.mouse.releases : {}));
+      for (const [button, count] of Object.entries(presses)) newPresses[button] = (newPresses[button] ?? 0) + count;
+      for (const [button, count] of Object.entries(releases)) newReleases[button] = (newReleases[button] ?? 0) + count;
+      usbMousePending.x += delta.x ?? 0;
+      usbMousePending.y += delta.y ?? 0;
+      wheel += delta.wheel ?? 0;
+      last = `${count} eventos nuevos · desplazamiento ${usbAxes(delta)} · pulsaciones: ${usbEdges(presses)} · liberaciones: ${usbEdges(releases)}`;
+    }
+    next.set(key, { mouse: { sequence: mouse.sequence, total: { ...mouse.total }, presses: { ...mouse.presses }, releases: { ...mouse.releases } },
+                    report: r, events, wheel, presses: newPresses, releases: newReleases, last });
+  }
+  usbMouseSources = next;
+  const buttons = new Set(u.interfaces.filter((i) => i.active && i.mouse).flatMap((i) => i.buttons));
+  for (const button of u.mouse.buttons) buttons.add(button);
+  for (const { report } of next.values()) {
+    for (const button of [...Object.keys(report.mouse.presses), ...Object.keys(report.mouse.releases)]) buttons.add(Number(button));
+  }
+  $("usbmousebuttons").replaceChildren(...[...buttons].sort((a, b) => a - b).map((button) => {
+    const el = document.createElement("span"), held = u.mouse.buttons.includes(button);
+    let presses = 0, releases = 0;
+    for (const source of next.values()) { presses += source.presses[button] ?? 0; releases += source.releases[button] ?? 0; }
+    el.dataset.button = String(button);
+    el.dataset.held = String(held);
+    el.dataset.presses = String(presses);
+    el.dataset.releases = String(releases);
+    el.className = held ? "held" : "";
+    el.setAttribute("role", "listitem");
+    el.textContent = `${usbButtonName(button)}: ${held ? "mantenido" : "suelto"} · pulsaciones nuevas ${presses} · liberaciones nuevas ${releases}`;
+    return el;
+  }));
+  let events = 0, wheel = 0;
+  $("usbmousereports").replaceChildren(...[...next.values()].map((source) => {
+    const el = document.createElement("div"), r = source.report, mouse = r.mouse;
+    el.dataset.source = JSON.stringify([r.interface, r.endpoint, r.report_id, r.collection]);
+    el.textContent = `${usbSource(r)}\nBotones mantenidos: ${mouse.buttons.length ? mouse.buttons.map(usbButtonName).join(", ") : "ninguno"}\n` +
+      `Último relativo: ${usbAxes(mouse.relative)} · absoluto: ${usbAxes(mouse.absolute)}\n` +
+      `Acumulado USB: ${usbAxes(mouse.total)} · eventos USB: ${mouse.sequence}\n${source.last}`;
+    events += source.events; wheel += source.wheel;
+    return el;
+  }));
+  $("usbmouseevents").textContent = `Eventos nuevos: ${events} · rueda relativa: ${wheel}`;
+  usbMouseFit();
+}
+function usbHidPanel(u) {
+  if (!u.cable || (!u.hid.keyboard && !u.hid.mouse)) {
+    usbHidReset();
+  } else {
+    $("usbhidcaps").hidden = false;
+    $("usbhidcaps").textContent = `HID: ${[u.hid.keyboard ? "teclado" : "", u.hid.mouse ? "ratón" : ""].filter(Boolean).join(" · ")}`;
+    $("usbkbd").hidden = !u.hid.keyboard;
+    $("usbkeys").textContent = usbKeys(u.keys_down);
+    $("usbmods").textContent = usbModifiers(u.modifiers);
+    $("usbkbdinterfaces").textContent = usbInterfaces(u, "keyboard");
+    $("usbkbdreports").replaceChildren(...u.hid.reports.filter((r) => r.keys_down !== null).map((r) => {
+      const el = document.createElement("div");
+      el.textContent = `${usbSource(r)}\n${usbKeys(r.keys_down)}\n${usbModifiers(r.modifiers)}`;
+      return el;
+    }));
+    $("usbmouse").hidden = !u.hid.mouse;
+    $("usbmouseinterfaces").textContent = usbInterfaces(u, "mouse");
+    if (u.hid.mouse) usbMousePanel(u); else usbMouseReset();
+  }
+  usbHidObserved = true;
+}
 
 function usbPanel(u) {
   usbCable = u.cable;
@@ -147,11 +315,9 @@ function usbPanel(u) {
     }));
     $("usblast").textContent = u.last || "";
   }
-  $("usbkbd").hidden = u.stage !== "keyboard";
-  if (u.stage === "keyboard") {
-    $("usbtyped").textContent = u.typed;
-    if ($("usblayout").value !== u.layout) $("usblayout").value = u.layout;
-  }
+  $("usbtyped").textContent = u.typed;
+  if ($("usblayout").value !== u.layout) $("usblayout").value = u.layout;
+  usbHidPanel(u);
   const log = $("usblog"), atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
   log.textContent = u.log.join("\n");
   if (atEnd) log.scrollTop = log.scrollHeight;
@@ -175,6 +341,9 @@ $("usbput").onchange = async () => {
   for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode(...bytes.subarray(i, i + 8192));
   usbCmd({ cmd: "put", name: f.name, data: btoa(s) });
 };
+const usbMouseObserver = new ResizeObserver(usbMouseFit);
+usbMouseObserver.observe($("usbdesktop"));
+usbMouseObserver.observe($("usbcursor"));
 
 // ---- The glass -----------------------------------------------------------
 
@@ -231,6 +400,7 @@ function setState(s, detail = "", local = false) {
   const b = $("banner");
   b.innerHTML = "";
   if (s === "running") { b.classList.remove("show"); return; }
+  usbHidReset();
   micStop();   // a firmware that is off or crashed records nothing
   if (s === "off") { image.data.fill(0); ctx2d.putImageData(image, 0, 0); led([0, 0, 0]); }
   const p = document.createElement("div");

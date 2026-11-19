@@ -35,6 +35,17 @@ static void queue_xfer(kemu_usb_t *m, uint8_t ep_addr, uint32_t len, bool ok)
     }
 }
 
+static void drop_completions(kemu_usb_t *m, uint8_t ep_addr)
+{
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < m->nev; i++) {
+        if (m->ev[i].kind != KEMU_USB_EV_XFER || m->ev[i].ep_addr != ep_addr) {
+            m->ev[kept++] = m->ev[i];
+        }
+    }
+    m->nev = kept;
+}
+
 static kemu_usb_ep_t *ep_of(kemu_usb_t *m, uint8_t ep_addr)
 {
     uint8_t const n = ep_addr & 0x7FU;
@@ -74,9 +85,14 @@ void kemu_usb_init(kemu_usb_t *m, kemu_usb_out_t out, void *ctx)
     m->ctx = ctx;
 }
 
+static void drop_all(kemu_usb_t *m);
+
 static void try_attach(kemu_usb_t *m)
 {
     if (m->inited && m->pullup && m->cable && !m->on_bus) {
+        drop_all(m);
+        open_ep0(m);
+        m->nev = 0;
         m->on_bus = true;
         queue_ev(m, KEMU_USB_EV_BUS_RESET);
     }
@@ -88,12 +104,13 @@ static void drop_all(kemu_usb_t *m)
         reset_ep(&m->in[i]);
         reset_ep(&m->outp[i]);
     }
-    open_ep0(m);
 }
 
 bool kemu_usb_dcd_init(kemu_usb_t *m)
 {
+    if (m->inited) { return false; }
     drop_all(m);
+    open_ep0(m);
     m->nev = 0;
     m->inited = true;
     m->pullup = false;
@@ -114,6 +131,7 @@ void kemu_usb_dcd_deinit(kemu_usb_t *m)
 
 void kemu_usb_dcd_connect(kemu_usb_t *m)
 {
+    if (!m->inited || m->pullup) { return; }
     m->pullup = true;
     m->out.dev(m->ctx, KEMU_USB_DEV_PULLUP, 1, 0);
     try_attach(m);
@@ -121,13 +139,17 @@ void kemu_usb_dcd_connect(kemu_usb_t *m)
 
 void kemu_usb_dcd_disconnect(kemu_usb_t *m)
 {
+    if (!m->inited || !m->pullup) { return; }
     m->pullup = false;
     m->on_bus = false;
+    drop_all(m);
+    m->nev = 0;
     m->out.dev(m->ctx, KEMU_USB_DEV_PULLUP, 0, 0);
 }
 
 void kemu_usb_dcd_set_address(kemu_usb_t *m, uint8_t addr)
 {
+    if (!m->inited || !m->on_bus || addr > 127U) { return; }
     m->out.dev(m->ctx, KEMU_USB_DEV_ADDRESS, addr, 0);
     /* TinyUSB leaves the status stage of SET_ADDRESS to the driver (the DWC2 one sends its
      * zero-length IN right away, before the address takes): without it the host waits for ever. */
@@ -137,9 +159,11 @@ void kemu_usb_dcd_set_address(kemu_usb_t *m, uint8_t addr)
 bool kemu_usb_dcd_edpt_open(kemu_usb_t *m, uint8_t ep_addr, uint16_t mps, uint8_t type)
 {
     kemu_usb_ep_t *e = ep_of(m, ep_addr);
-    if (e == NULL) {
+    if (!m->inited || e == NULL || mps == 0U || type > 3U ||
+        mps > (type == 1U ? 1023U : 64U)) {
         return false;
     }
+    drop_completions(m, ep_addr);
     reset_ep(e);
     e->open = true;
     e->mps = mps;
@@ -151,7 +175,8 @@ bool kemu_usb_dcd_edpt_open(kemu_usb_t *m, uint8_t ep_addr, uint16_t mps, uint8_
 void kemu_usb_dcd_edpt_close(kemu_usb_t *m, uint8_t ep_addr)
 {
     kemu_usb_ep_t *e = ep_of(m, ep_addr);
-    if (e != NULL && (ep_addr & 0x7FU) != 0U) {
+    if (m->inited && e != NULL && (ep_addr & 0x7FU) != 0U) {
+        drop_completions(m, ep_addr);
         reset_ep(e);
         m->out.dev(m->ctx, KEMU_USB_DEV_EP_CLOSE, ep_addr, 0);
     }
@@ -159,7 +184,10 @@ void kemu_usb_dcd_edpt_close(kemu_usb_t *m, uint8_t ep_addr)
 
 void kemu_usb_dcd_edpt_close_all(kemu_usb_t *m)
 {
+    if (!m->inited) { return; }
     for (uint32_t i = 1; i < KEMU_USB_EPS; i++) {
+        drop_completions(m, (uint8_t)(i | 0x80U));
+        drop_completions(m, (uint8_t)i);
         reset_ep(&m->in[i]);
         reset_ep(&m->outp[i]);
     }
@@ -178,7 +206,7 @@ static void pump_out(kemu_usb_t *m, uint8_t num)
         kemu_usb_chunk_t *c = e->q_head;
         uint32_t const room = e->total - e->done;
         uint32_t const n = (c->len - c->used < room) ? c->len - c->used : room;
-        memcpy(e->buf + e->done, c->data + c->used, n);
+        if (n != 0U) { memcpy(e->buf + e->done, c->data + c->used, n); }
         e->done += n;
         c->used += n;
         took += n;
@@ -204,7 +232,8 @@ static void pump_out(kemu_usb_t *m, uint8_t num)
 bool kemu_usb_dcd_edpt_xfer(kemu_usb_t *m, uint8_t ep_addr, uint8_t *buf, uint16_t total)
 {
     kemu_usb_ep_t *e = ep_of(m, ep_addr);
-    if (e == NULL || !e->open) {
+    if (!m->inited || e == NULL || !e->open || e->stalled || e->armed ||
+        (total != 0U && buf == NULL)) {
         return false;
     }
     uint8_t const num = ep_addr & 0x7FU;
@@ -237,7 +266,10 @@ bool kemu_usb_dcd_edpt_xfer(kemu_usb_t *m, uint8_t ep_addr, uint8_t *buf, uint16
 void kemu_usb_dcd_edpt_stall(kemu_usb_t *m, uint8_t ep_addr)
 {
     kemu_usb_ep_t *e = ep_of(m, ep_addr);
-    if (e != NULL) {
+    if (m->inited && e != NULL && e->open) {
+        e->armed = false;
+        e->buf = NULL;
+        flush_queue(e);
         e->stalled = true;
         m->out.dev(m->ctx, KEMU_USB_DEV_STALL, ep_addr, 0);
     }
@@ -246,7 +278,7 @@ void kemu_usb_dcd_edpt_stall(kemu_usb_t *m, uint8_t ep_addr)
 void kemu_usb_dcd_edpt_clear_stall(kemu_usb_t *m, uint8_t ep_addr)
 {
     kemu_usb_ep_t *e = ep_of(m, ep_addr);
-    if (e != NULL) {
+    if (m->inited && e != NULL && e->open) {
         e->stalled = false;
         m->out.dev(m->ctx, KEMU_USB_DEV_CLEAR, ep_addr, 0);
     }
@@ -265,7 +297,18 @@ void kemu_usb_bus(kemu_usb_t *m, uint8_t kind)
         m->cable = false;
         if (m->on_bus) {
             m->on_bus = false;
+            drop_all(m);
+            open_ep0(m);
+            m->nev = 0;
             queue_ev(m, KEMU_USB_EV_UNPLUGGED);
+        }
+        break;
+    case KEMU_USB_BUS_RESET:
+        if (m->inited && m->on_bus) {
+            drop_all(m);
+            open_ep0(m);
+            m->nev = 0;
+            queue_ev(m, KEMU_USB_EV_BUS_RESET);
         }
         break;
     case KEMU_USB_BUS_SUSPEND:
@@ -285,7 +328,12 @@ void kemu_usb_bus(kemu_usb_t *m, uint8_t kind)
 
 void kemu_usb_setup(kemu_usb_t *m, const uint8_t setup[8])
 {
-    if (!m->on_bus || m->nev >= KEMU_USB_EV_MAX) {
+    if (!m->on_bus) {
+        return;
+    }
+    drop_completions(m, 0x80U);
+    drop_completions(m, 0U);
+    if (m->nev >= KEMU_USB_EV_MAX) {
         return;
     }
     /* A SETUP aborts whatever the control pipe was doing and clears its stall. */
@@ -303,10 +351,12 @@ void kemu_usb_setup(kemu_usb_t *m, const uint8_t setup[8])
 
 bool kemu_usb_out_data(kemu_usb_t *m, uint8_t ep, const uint8_t *p, uint32_t len)
 {
-    if (ep >= KEMU_USB_EPS || !m->outp[ep].open || !m->on_bus) {
+    if (!m->inited || ep >= KEMU_USB_EPS || !m->outp[ep].open ||
+        m->outp[ep].stalled || !m->on_bus || (len != 0U && p == NULL)) {
         return false;
     }
     kemu_usb_ep_t *e = &m->outp[ep];
+    if (len > KEMU_USB_CREDIT - e->q_bytes) { return false; }
     kemu_usb_chunk_t *c = malloc(sizeof *c + len);
     if (c == NULL) {
         return false;
@@ -315,7 +365,7 @@ bool kemu_usb_out_data(kemu_usb_t *m, uint8_t ep, const uint8_t *p, uint32_t len
     c->len = len;
     c->used = 0;
     c->short_end = len == 0U || (e->mps != 0U && (len % e->mps) != 0U);
-    memcpy(c->data, p, len);
+    if (len != 0U) { memcpy(c->data, p, len); }
     if (e->q_tail != NULL) {
         e->q_tail->next = c;
     } else {

@@ -12,3 +12,4 @@ build_tests/
 dist/
 target/
 .claude/worktrees/
+.idea

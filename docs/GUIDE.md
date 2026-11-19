@@ -395,8 +395,12 @@ enumerates what answers: its descriptors, `SET_ADDRESS`,
 A restart of the Kode Dot finds the cable where it was and is enumerated
 again. Limits: no 64-byte packets or bus timing (an IN transfer goes out
 whole, so speeds are the emulator's, not the bus's), no isochronous
-endpoints yet (so the Webcam's video is not shown), and tinyusb's own
-`tinyusb_driver_install` (kodeOS's dock) still answers "not supported".
+endpoints yet (so the Webcam's video is not shown). ESP-TinyUSB 2.2.0 also
+runs its real driver, descriptors, task and callbacks on the Full-Speed
+port (`TINYUSB_PORT_FULL_SPEED_0` on ESP32-P4). The High-Speed port is
+rejected explicitly, including when PHY setup is skipped. The computer's
+class drivers remain mass storage and keyboard. See [USB lifecycle and
+regression tests](USB.md) for the emulation boundary and validation.
 
 ## What is simulated, and what is not
 

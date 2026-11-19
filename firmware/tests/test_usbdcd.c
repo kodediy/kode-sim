@@ -48,6 +48,7 @@ static kemu_usb_t m;
 
 static void fresh(void)
 {
+    if (m.inited) { kemu_usb_dcd_deinit(&m); }
     memset(&lg, 0, sizeof lg);
     kemu_usb_init(&m, (kemu_usb_out_t){on_in, on_dev, on_ack}, &lg);
 }
@@ -186,6 +187,8 @@ static void test_in_data_goes_out_at_once_and_waits_off_the_bus(void)
     kemu_usb_dcd_connect(&m);
     kemu_usb_bus(&m, KEMU_USB_BUS_CABLE_IN);
     CHECK(drain(ev) == 1);                                /* the bus reset: the stack re-arms from scratch */
+    CHECK(!m.in[1].armed && !m.in[1].open);
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x81, 8, 3));
     CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x81, rep, 8));
     CHECK(lg.n_in == 1 && lg.in_ep[0] == 0x81 && lg.in_len[0] == 8 && lg.in_first[0] == 0);
     CHECK(drain(ev) == 1 && ev[0].kind == KEMU_USB_EV_XFER && ev[0].ep_addr == 0x81 && ev[0].len == 8);
@@ -226,6 +229,177 @@ static void test_a_stack_that_stops_leaves_the_bus_and_what_waited_is_dropped(vo
     CHECK(drain(ev) == 1 && ev[0].kind == KEMU_USB_EV_BUS_RESET);
 }
 
+static void test_invalid_states_and_repeated_initialization(void)
+{
+    kemu_usb_ev_t ev[KEMU_USB_EV_MAX];
+    uint8_t data[64] = {0};
+    fresh();
+    kemu_usb_dcd_connect(&m);
+    CHECK(!m.pullup && lg.n_dev == 0);
+    CHECK(!kemu_usb_dcd_edpt_open(&m, 0x81, 8, 3));
+    CHECK(!kemu_usb_dcd_edpt_xfer(&m, 0x80, data, sizeof data));
+    CHECK(kemu_usb_dcd_init(&m));
+    CHECK(!kemu_usb_dcd_init(&m));
+    CHECK(!kemu_usb_dcd_edpt_open(&m, KEMU_USB_EPS, 64, 2));
+    CHECK(!kemu_usb_dcd_edpt_open(&m, 1, 0, 2));
+    CHECK(!kemu_usb_dcd_edpt_open(&m, 1, 512, 2));
+    CHECK(!kemu_usb_dcd_edpt_open(&m, 1, 64, 4));
+    CHECK(!kemu_usb_dcd_edpt_xfer(&m, 0x80, NULL, 1));
+    kemu_usb_dcd_connect(&m);
+    kemu_usb_dcd_connect(&m);
+    CHECK(lg.n_dev == 1);
+    kemu_usb_dcd_deinit(&m);
+    uint32_t const sent = lg.n_dev;
+    kemu_usb_dcd_deinit(&m);
+    kemu_usb_dcd_connect(&m);
+    kemu_usb_dcd_set_address(&m, 1);
+    kemu_usb_dcd_edpt_stall(&m, 0x80);
+    kemu_usb_dcd_edpt_clear_stall(&m, 0x80);
+    kemu_usb_dcd_edpt_close_all(&m);
+    kemu_usb_bus(&m, KEMU_USB_BUS_CABLE_IN);
+    kemu_usb_bus(&m, KEMU_USB_BUS_SUSPEND);
+    kemu_usb_bus(&m, KEMU_USB_BUS_RESUME);
+    kemu_usb_setup(&m, (uint8_t[8]){0});
+    CHECK(!kemu_usb_out_data(&m, 0, data, sizeof data));
+    CHECK(!m.in[0].open && !m.outp[0].open);
+    CHECK(lg.n_dev == sent && drain(ev) == 0);
+    CHECK(kemu_usb_dcd_init(&m));
+    kemu_usb_dcd_connect(&m);
+    CHECK(drain(ev) == 1 && ev[0].kind == KEMU_USB_EV_BUS_RESET);
+    kemu_usb_dcd_deinit(&m);
+}
+
+static void test_reconnect_discards_endpoints_buffers_and_old_completions(void)
+{
+    kemu_usb_ev_t ev[KEMU_USB_EV_MAX];
+    uint8_t data[64] = {0}, dst[64];
+    bring_up();
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x01, 64, 2));
+    CHECK(kemu_usb_out_data(&m, 1, data, sizeof data));
+    CHECK(m.outp[1].q_bytes == sizeof data);
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x82, 8, 3));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x82, data, 8));
+    kemu_usb_bus(&m, KEMU_USB_BUS_CABLE_OUT);
+    CHECK(drain(ev) == 1 && ev[0].kind == KEMU_USB_EV_UNPLUGGED);
+    CHECK(!m.outp[1].open && m.outp[1].q_head == NULL);
+    kemu_usb_bus(&m, KEMU_USB_BUS_CABLE_IN);
+    CHECK(drain(ev) == 1 && ev[0].kind == KEMU_USB_EV_BUS_RESET);
+    CHECK(m.in[0].open && m.outp[0].open);
+    CHECK(!kemu_usb_dcd_edpt_xfer(&m, 1, dst, sizeof dst));
+    CHECK(kemu_usb_dcd_edpt_open(&m, 1, 64, 2));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 1, dst, sizeof dst));
+    CHECK(drain(ev) == 0);
+    kemu_usb_dcd_deinit(&m);
+    CHECK(m.outp[1].buf == NULL && m.outp[1].q_head == NULL);
+}
+
+static void test_stall_aborts_transfers_and_out_credit_is_bounded(void)
+{
+    kemu_usb_ev_t ev[KEMU_USB_EV_MAX];
+    uint8_t data[KEMU_USB_CREDIT] = {0}, dst[64];
+    bring_up();
+    CHECK(kemu_usb_dcd_edpt_open(&m, 1, 64, 2));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 1, dst, sizeof dst));
+    CHECK(!kemu_usb_dcd_edpt_xfer(&m, 1, dst, sizeof dst));
+    kemu_usb_dcd_edpt_stall(&m, 1);
+    CHECK(!m.outp[1].armed && m.outp[1].buf == NULL);
+    CHECK(!kemu_usb_out_data(&m, 1, data, 1));
+    CHECK(!kemu_usb_dcd_edpt_xfer(&m, 1, dst, sizeof dst));
+    kemu_usb_dcd_edpt_clear_stall(&m, 1);
+    CHECK(kemu_usb_out_data(&m, 1, data, sizeof data));
+    CHECK(!kemu_usb_out_data(&m, 1, data, 1));
+    CHECK(!kemu_usb_out_data(&m, 1, NULL, 1));
+    CHECK(drain(ev) == 0);
+    kemu_usb_dcd_deinit(&m);
+    CHECK(m.outp[1].q_bytes == 0 && m.outp[1].q_head == NULL);
+}
+
+static void test_bus_reset_cancels_configured_endpoints_and_pending_events(void)
+{
+    kemu_usb_ev_t ev[KEMU_USB_EV_MAX];
+    uint8_t data[64] = {0};
+    bring_up();
+    CHECK(kemu_usb_dcd_edpt_open(&m, 1, 64, 2));
+    CHECK(kemu_usb_out_data(&m, 1, data, sizeof data));
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x81, 8, 3));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x81, data, 8));
+    kemu_usb_bus(&m, KEMU_USB_BUS_RESET);
+    CHECK(m.cable && m.pullup && m.on_bus);
+    CHECK(!m.outp[1].open && m.outp[1].q_head == NULL && !m.in[1].open);
+    CHECK(m.in[0].open && m.outp[0].open);
+    CHECK(drain(ev) == 1 && ev[0].kind == KEMU_USB_EV_BUS_RESET);
+    kemu_usb_setup(&m, (uint8_t[8]){0x80, 6, 0, 1, 0, 0, 18, 0});
+    CHECK(drain(ev) == 1 && ev[0].kind == KEMU_USB_EV_SETUP);
+    kemu_usb_dcd_deinit(&m);
+    kemu_usb_bus(&m, KEMU_USB_BUS_RESET);
+    CHECK(drain(ev) == 0 && !m.in[0].open);
+}
+
+static void test_endpoint_close_removes_only_its_pending_completions(void)
+{
+    kemu_usb_ev_t ev[KEMU_USB_EV_MAX];
+    uint8_t data[8] = {0};
+    bring_up();
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x81, sizeof data, 3));
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x82, sizeof data, 3));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x81, data, 1));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x82, data, 2));
+    kemu_usb_bus(&m, KEMU_USB_BUS_SUSPEND);
+    kemu_usb_dcd_edpt_close(&m, 0x81);
+    CHECK(!kemu_usb_dcd_edpt_xfer(&m, 0x81, data, 3));
+    CHECK(drain(ev) == 2);
+    CHECK(ev[0].kind == KEMU_USB_EV_XFER && ev[0].ep_addr == 0x82 && ev[0].len == 2);
+    CHECK(ev[1].kind == KEMU_USB_EV_SUSPEND);
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x81, sizeof data, 3));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x81, data, 3));
+    CHECK(drain(ev) == 1 && ev[0].ep_addr == 0x81 && ev[0].len == 3);
+}
+
+static void test_closing_all_endpoints_keeps_only_control_completions(void)
+{
+    kemu_usb_ev_t ev[KEMU_USB_EV_MAX];
+    uint8_t data[8] = {0};
+    bring_up();
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x81, sizeof data, 3));
+    CHECK(kemu_usb_dcd_edpt_open(&m, 1, sizeof data, 2));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x80, data, 1));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x81, data, 2));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 1, data, 3));
+    CHECK(kemu_usb_out_data(&m, 1, data, 3));
+    kemu_usb_dcd_edpt_close_all(&m);
+    CHECK(drain(ev) == 1 && ev[0].ep_addr == 0x80 && ev[0].len == 1);
+    CHECK(m.in[0].open && m.outp[0].open);
+    CHECK(!m.in[1].open && !m.outp[1].open);
+}
+
+static void test_reopening_an_endpoint_cancels_its_old_completion(void)
+{
+    kemu_usb_ev_t ev[KEMU_USB_EV_MAX];
+    uint8_t data[8] = {0};
+    bring_up();
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x81, sizeof data, 3));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x81, data, 1));
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x81, sizeof data, 3));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x81, data, 2));
+    CHECK(drain(ev) == 1 && ev[0].ep_addr == 0x81 && ev[0].len == 2);
+}
+
+static void test_new_setup_cancels_old_control_completions_only(void)
+{
+    kemu_usb_ev_t ev[KEMU_USB_EV_MAX];
+    uint8_t data[8] = {0};
+    uint8_t setup[8] = {0x80, 8, 0, 0, 0, 0, 1, 0};
+    bring_up();
+    CHECK(kemu_usb_dcd_edpt_open(&m, 0x81, sizeof data, 3));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x80, data, 1));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0, NULL, 0));
+    CHECK(kemu_usb_dcd_edpt_xfer(&m, 0x81, data, 2));
+    kemu_usb_setup(&m, setup);
+    CHECK(drain(ev) == 2);
+    CHECK(ev[0].kind == KEMU_USB_EV_XFER && ev[0].ep_addr == 0x81);
+    CHECK(ev[1].kind == KEMU_USB_EV_SETUP && memcmp(ev[1].setup, setup, sizeof setup) == 0);
+}
+
 int main(void)
 {
     RUN(test_the_bus_resets_once_the_cable_and_the_pullup_are_both_there);
@@ -236,5 +410,13 @@ int main(void)
     RUN(test_in_data_goes_out_at_once_and_waits_off_the_bus);
     RUN(test_stalls_and_suspends_reach_both_sides);
     RUN(test_a_stack_that_stops_leaves_the_bus_and_what_waited_is_dropped);
+    RUN(test_invalid_states_and_repeated_initialization);
+    RUN(test_reconnect_discards_endpoints_buffers_and_old_completions);
+    RUN(test_stall_aborts_transfers_and_out_credit_is_bounded);
+    RUN(test_bus_reset_cancels_configured_endpoints_and_pending_events);
+    RUN(test_endpoint_close_removes_only_its_pending_completions);
+    RUN(test_closing_all_endpoints_keeps_only_control_completions);
+    RUN(test_reopening_an_endpoint_cancels_its_old_completion);
+    RUN(test_new_setup_cancels_old_control_completions_only);
     CHECK_DONE();
 }

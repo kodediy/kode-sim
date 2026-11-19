@@ -29,7 +29,7 @@
 /* Mac -> firmware */
 #define KEMU_T_CONSOLE_IN 0x84U  /* raw console input (the USJ's RX)        */
 #define KEMU_T_TIME       0x88U  /* unix_us u64: the Mac's clock, for the RTC */
-#define KEMU_T_USB_BUS    0x8AU  /* kind u8: 0 cable out, 1 cable in, 2 suspend, 3 resume */
+#define KEMU_T_USB_BUS    0x8AU  /* kind u8: 0 cable out, 1 cable in, 2 suspend, 3 resume, 4 reset */
 #define KEMU_T_USB_SETUP  0x8BU  /* the 8 bytes of a SETUP packet           */
 #define KEMU_T_USB_OUT    0x8CU  /* ep u8 (0-7), then one OUT chunk, up to 4096 bytes */
 

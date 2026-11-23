@@ -70,7 +70,9 @@ What esp-emu does not have yet, `kemu` does from inside the firmware: a small co
 
 ## Install
 
-kode-sim is made for macOS on Apple silicon. Its tests pass on Linux too, but building and running firmware there has not been tried yet: tell us how it goes.
+kode-sim is made for macOS on Apple silicon. It also builds and runs firmware on Linux: tried on Debian 12, x86_64 (see [Linux](docs/GUIDE.md#linux) in the guide).
+
+To install everything in one go (ESP-IDF, Rust, kode-sim and kodeOS) on macOS, Linux or Windows (WSL2), use the scripts in [`site/`](site/), which the download page offers.
 
 1. **ESP-IDF v6.1**, the version kodeOS is built with, installed in `~/.espressif` with Espressif's installer.
 2. **Rust**, stable, from [rustup.rs](https://rustup.rs).
@@ -86,7 +88,7 @@ ln -sf "$PWD/target/release/kode-sim" ~/.local/bin/kode-sim
 
 - Keep the folder where it is: kode-sim uses its `web/` and `firmware/`.
 - On its first run, kode-sim installs esp-emu 1.2.0 with Espressif's installer, and builds the C5's firmware with your ESP-IDF, both in its own cache.
-- On Linux, install `mtools` too: kode-sim uses it to make the microSD image.
+- On Linux, install `rsync` and `mtools` too (Debian/Ubuntu: `sudo apt install rsync mtools`): kode-sim copies the project with rsync and makes the microSD image with mtools.
 
 ## Use
 

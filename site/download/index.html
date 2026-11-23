@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download kode-sim</title>
+<meta name="description" content="Install kode-sim, the Kode Dot simulator, on macOS, Linux or Windows with one command.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #DED7CD;
+    --card: #EFEAE3;
+    --ink: #191919;
+    --muted: #5E5A54;
+    --line: #C9C1B5;
+    --yellow: #FFAC00;
+    --blue: #028AC2;
+    --code-bg: #191919;
+    --code-ink: #EFEAE3;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 17px/1.55 "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; color: var(--ink); }
+  .brand .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--yellow); box-shadow: 0 0 0 4px var(--ink); }
+  nav a { color: var(--ink); margin-left: 22px; font-weight: 500; }
+
+  .hero { display: grid; grid-template-columns: 1.3fr .7fr; gap: 40px; align-items: center; padding: 28px 0 40px; }
+  .eyebrow { display: inline-block; font-weight: 600; font-size: 14px; letter-spacing: .04em; text-transform: uppercase;
+             background: var(--ink); color: var(--yellow); padding: 4px 12px; border-radius: 999px; }
+  h1 { font-size: clamp(40px, 7vw, 68px); line-height: 1.02; margin: 18px 0 14px; letter-spacing: -.02em; }
+  h1 em { font-style: normal; color: var(--blue); }
+  .lead { font-size: 20px; color: var(--muted); max-width: 34em; margin: 0; }
+  .device { justify-self: center; width: min(240px, 60vw); filter: drop-shadow(0 24px 30px rgba(25,25,25,.25)); }
+
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
+  .tab { font: inherit; font-weight: 600; font-size: 16px; color: var(--ink); background: transparent;
+         border: 2px solid var(--ink); border-radius: 999px; padding: 8px 20px; cursor: pointer; }
+  .tab[aria-selected="true"] { background: var(--ink); color: var(--card); }
+  .tab .rec { font-size: 12px; font-weight: 500; margin-left: 6px; color: var(--yellow); }
+
+  .panel { background: var(--card); border: 2px solid var(--ink); border-radius: 22px; padding: 26px; }
+  .panel[hidden] { display: none; }
+  .panel h2 { margin: 0 0 4px; font-size: 26px; }
+  .panel .req { color: var(--muted); margin: 0 0 18px; }
+  .cmd { display: flex; align-items: stretch; background: var(--code-bg); color: var(--code-ink); border-radius: 14px;
+         overflow: hidden; }
+  .cmd code { flex: 1; font: 15px/1.5 var(--mono); padding: 16px 18px; overflow-x: auto; white-space: nowrap; }
+  .cmd code .p { color: var(--yellow); user-select: none; }
+  .copy { font: inherit; font-weight: 600; border: 0; background: var(--yellow); color: var(--ink); padding: 0 20px; cursor: pointer; }
+  .copy:active { filter: brightness(.9); }
+  .where { font-size: 15px; color: var(--muted); margin: 10px 2px 0; }
+  .alt { margin-top: 16px; font-size: 15px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink);
+         border: 2px solid var(--ink); border-radius: 999px; padding: 6px 16px; margin: 6px 8px 0 0; }
+  .btn:hover { background: var(--ink); color: var(--card); text-decoration: none; }
+  ol.steps { margin: 20px 0 0; padding-left: 22px; }
+  ol.steps li { margin: 6px 0; }
+
+  section { padding: 44px 0 0; }
+  section > h2 { font-size: 32px; margin: 0 0 18px; letter-spacing: -.01em; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card { background: var(--card); border-radius: 18px; padding: 20px; border: 1px solid var(--line); }
+  .card h3 { margin: 0 0 6px; font-size: 19px; }
+  .card p { margin: 0; color: var(--muted); font-size: 16px; }
+  .num { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+         background: var(--yellow); font-weight: 700; margin-bottom: 10px; }
+  pre.block { background: var(--code-bg); color: var(--code-ink); font: 14px/1.6 var(--mono); padding: 16px 18px;
+              border-radius: 14px; overflow-x: auto; margin: 0; }
+  pre.block .c { color: #9A948A; }
+  kbd { font: 13px var(--mono); background: var(--card); border: 1px solid var(--ink); border-bottom-width: 3px;
+        border-radius: 6px; padding: 1px 6px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 18px; overflow: hidden; font-size: 16px; }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--ink); color: var(--card); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+
+  footer { margin: 60px 0 0; padding: 26px 0 40px; border-top: 2px solid var(--ink); color: var(--muted); font-size: 15px; }
+  footer .row { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+  @media (max-width: 760px) {
+    .hero { grid-template-columns: 1fr; gap: 20px; }
+    .device { order: -1; width: 150px; }
+    .grid { grid-template-columns: 1fr; }
+    nav a { margin-left: 14px; }
+    .panel { padding: 18px; }
+    .cmd code { font-size: 13px; }
+    th, td { padding: 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap" id="site">
+  <header>
+    <a class="brand" href="/"><span class="dot"></span>kode-sim</a>
+    <nav>
+      <a href="https://github.com/kodediy/kode-sim">GitHub</a>
+      <a href="https://docs.kode.diy">Docs</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div>
+      <span class="eyebrow">Download</span>
+      <h1>A Kode Dot<br>on your <em>desk</em>.</h1>
+      <p class="lead">kode-sim runs kodeOS and your apps on an emulated ESP32-P4, the real firmware instruction by instruction, without the board. One command installs everything and opens the Dot in Chrome.</p>
+    </div>
+    <img class="device" src="kode-dot.png" alt="The Kode Dot">
+  </div>
+
+  <div class="tabs" role="tablist" aria-label="Your computer">
+    <button class="tab" role="tab" id="t-mac" aria-controls="p-mac" aria-selected="true">macOS<span class="rec" id="r-mac"></span></button>
+    <button class="tab" role="tab" id="t-linux" aria-controls="p-linux" aria-selected="false">Linux<span class="rec" id="r-linux"></span></button>
+    <button class="tab" role="tab" id="t-win" aria-controls="p-win" aria-selected="false">Windows<span class="rec" id="r-win"></span></button>
+  </div>
+
+  <div class="panel" role="tabpanel" id="p-mac" aria-labelledby="t-mac">
+    <h2>macOS</h2>
+    <p class="req">A Mac with Apple silicon (M1 or later). About 6 GB free.</p>
+    <div class="cmd"><code><span class="p">$ </span>curl -fsSL https://sim.kode.diy/install-mac.sh | bash</code><button class="copy" data-copy="curl -fsSL https://sim.kode.diy/install-mac.sh | bash">Copy</button></div>
+    <p class="where">Paste it in <b>Terminal</b> (Applications &rsaquo; Utilities).</p>
+    <ol class="steps">
+      <li>Installs Homebrew, Rust, ESP-IDF v6.1 and Chrome when they are missing.</li>
+      <li>Builds kode-sim and fetches kodeOS.</li>
+      <li>Starts kodeOS in the simulator and opens the Kode Dot in Chrome.</li>
+    </ol>
+    <div class="alt"><a class="btn" href="/install-mac.sh" download>&darr; install-mac.sh</a></div>
+  </div>
+
+  <div class="panel" role="tabpanel" id="p-linux" aria-labelledby="t-linux" hidden>
+    <h2>Linux</h2>
+    <p class="req">x86_64 or arm64, with Debian, Ubuntu, Fedora or Arch. About 6 GB free.</p>
+    <div class="cmd"><code><span class="p">$ </span>curl -fsSL https://sim.kode.diy/install-linux.sh | bash</code><button class="copy" data-copy="curl -fsSL https://sim.kode.diy/install-linux.sh | bash">Copy</button></div>
+    <p class="where">Paste it in a terminal. It asks for your password once, for the system packages.</p>
+    <ol class="steps">
+      <li>Installs the build tools, rsync and mtools with your package manager, plus Rust, ESP-IDF v6.1 and Chrome.</li>
+      <li>Builds kode-sim and fetches kodeOS.</li>
+      <li>Starts kodeOS in the simulator and opens the Kode Dot in Chrome.</li>
+    </ol>
+    <div class="alt"><a class="btn" href="/install-linux.sh" download>&darr; install-linux.sh</a></div>
+  </div>
+
+  <div class="panel" role="tabpanel" id="p-win" aria-labelledby="t-win" hidden>
+    <h2>Windows</h2>
+    <p class="req">Windows 10 (2004 or later) or 11, 64-bit. Runs through WSL 2 with Ubuntu: the emulator is built for Linux and macOS. About 8 GB free.</p>
+    <div class="cmd"><code><span class="p">&gt; </span>powershell -ExecutionPolicy Bypass -c "irm https://sim.kode.diy/install-windows.ps1 | iex"</code><button class="copy" data-copy='powershell -ExecutionPolicy Bypass -c "irm https://sim.kode.diy/install-windows.ps1 | iex"'>Copy</button></div>
+    <p class="where">Paste it in <b>PowerShell</b> or <b>Terminal</b> (Start &rsaquo; type &ldquo;Terminal&rdquo;).</p>
+    <ol class="steps">
+      <li>Installs WSL 2 when it is missing. Windows asks to restart: run the same command again afterwards.</li>
+      <li>Installs Ubuntu (choose a Linux user name and password) and Chrome.</li>
+      <li>Runs the Linux installer inside Ubuntu, starts kodeOS and opens the Kode Dot in Chrome on Windows.</li>
+    </ol>
+    <div class="alt"><a class="btn" href="/install-windows.ps1" download>&darr; install-windows.ps1</a></div>
+  </div>
+
+  <section>
+    <h2>After the install</h2>
+    <div class="grid">
+      <div class="card"><span class="num">1</span><h3>Start it again</h3><p>Run the same command. It skips what is there, updates kode-sim and kodeOS, and opens the Dot.</p></div>
+      <div class="card"><span class="num">2</span><h3>Use the Dot</h3><p>Click the screen to touch it. <kbd>T</kbd> top button, <kbd>B</kbd> bottom button, the arrow keys for the pad.</p></div>
+      <div class="card"><span class="num">3</span><h3>Try your app</h3><p>Build any kode-sdk app and install it in the running kodeOS, as on the board.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Your own app</h2>
+<pre class="block"><span class="c"># a new app from the template</span>
+git clone https://github.com/kodediy/kode-app-template.git my-app
+
+<span class="c"># the tools, in a new terminal</span>
+. ~/.espressif/v6.1/esp-idf/export.sh
+
+<span class="c"># into the kodeOS that is running</span>
+kode-sim install my-app
+
+<span class="c"># or on its own, without kodeOS</span>
+kode-sim run my-app</pre>
+  </section>
+
+  <section>
+    <h2>What gets installed</h2>
+    <table>
+      <tr><th>What</th><th>Where</th></tr>
+      <tr><td>kode-sim and kodeOS</td><td><code>~/kode</code></td></tr>
+      <tr><td>ESP-IDF v6.1</td><td><code>~/.espressif</code></td></tr>
+      <tr><td>Rust</td><td><code>~/.cargo</code>, <code>~/.rustup</code></td></tr>
+      <tr><td>esp-emu 1.2.0 and the C5's firmware</td><td>kode-sim's cache, on its first run</td></tr>
+      <tr><td>The <code>kode-sim</code> command</td><td><code>~/.local/bin</code></td></tr>
+    </table>
+  </section>
+
+  <footer>
+    <div class="row">
+      <span>kode-sim is free software under the GPL-3.0-or-later.</span>
+      <span><a href="https://github.com/kodediy/kode-sim">Source</a> &middot; <a href="https://github.com/kodediy/kode-sim/issues">Report a problem</a></span>
+    </div>
+  </footer>
+</div>
+
+<script>
+  // The commands name the site they come from: sim.kode.diy there, this host elsewhere.
+  (function () {
+    var base = "https://sim.kode.diy";
+    if (location.protocol === "https:" && location.host !== "sim.kode.diy") {
+      var here = location.origin;
+      document.querySelectorAll(".cmd code, .copy").forEach(function (el) {
+        if (el.hasAttribute("data-copy")) { el.setAttribute("data-copy", el.getAttribute("data-copy").split(base).join(here)); }
+        el.innerHTML = el.innerHTML.split(base).join(here);
+      });
+    }
+  })();
+
+  (function () {
+    var ids = ["mac", "linux", "win"];
+    function show(id) {
+      ids.forEach(function (k) {
+        document.getElementById("t-" + k).setAttribute("aria-selected", String(k === id));
+        document.getElementById("p-" + k).hidden = (k !== id);
+      });
+    }
+    ids.forEach(function (k) {
+      document.getElementById("t-" + k).addEventListener("click", function () { show(k); });
+    });
+    // Open the visitor's own system first, and mark it.
+    var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+    var mine = /win/i.test(ua) ? "win" : /linux|x11|cros/i.test(ua) && !/android/i.test(navigator.userAgent) ? "linux" : "mac";
+    document.getElementById("r-" + mine).textContent = "your system";
+    show(mine);
+
+    document.querySelectorAll(".copy").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var t = b.getAttribute("data-copy");
+        var done = function () { b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1500); };
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(t).then(done, function () { prompt("Copy this:", t); });
+        } else {
+          prompt("Copy this:", t);
+        }
+      });
+    });
+  })();
+</script>
+</body>
+</html>

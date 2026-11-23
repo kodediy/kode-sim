@@ -276,6 +276,9 @@ pub fn prepare(cache: &Path, project: &Path, sdk: Option<&Path>, board: bool) ->
     match rsync.status() {
         Ok(s) if s.success() => {}
         Ok(s) => return Err(BuildError(format!("rsync of {} into {} failed ({s})", project.display(), src.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(BuildError("no rsync to copy the project with: install rsync".into()))
+        }
         Err(e) => return Err(BuildError(format!("could not run rsync: {e}"))),
     }
     let sdk = sdk.map(resolve);

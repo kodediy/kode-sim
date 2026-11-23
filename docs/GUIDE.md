@@ -90,6 +90,28 @@ Linux, where the cache is `$XDG_CACHE_HOME/kode-sim` (or
 (on the Mac, `diskutil` when mtools is not installed). `$KODE_SIM_CACHE` moves the cache: the builds, the
 card and the notes of the simulators running.
 
+### Linux
+
+Tried on Debian 12 (12.12), x86_64, with kode-sim 0.3.1 on esp-emu 1.2.0. What a fresh machine needs besides Rust:
+
+```bash
+sudo apt install build-essential rsync mtools
+```
+
+- `build-essential`: the C linker `cargo build` uses.
+- `rsync`: `kode-sim build` copies the project into its cache with it.
+- `mtools`: `mformat` makes the microSD image.
+
+ESP-IDF v6.1 can stay where it is: without `~/.espressif/tools/activate_idf_v6.1.sh`,
+kode-sim sources `$IDF_PATH/export.sh`, so `export IDF_PATH=/path/to/esp-idf` is enough.
+On its first run kode-sim installs the `x86_64-unknown-linux-gnu` release of esp-emu
+and builds the C5's firmware (kode_slave_c5) with that ESP-IDF; this needs no other Debian
+package, only ESP-IDF's tools for both chips: `./install.sh esp32p4,esp32c5`.
+
+Without a desktop (a server, a container), `kode-sim run --no-open` serves the page on
+`--port` and opens no window; reach it through an SSH tunnel
+(`ssh -L 8765:127.0.0.1:8765 host`) or a proxy in front of it.
+
 ## Use
 
 ```

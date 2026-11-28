@@ -1,6 +1,6 @@
 [package]
 name = "kodedot-chips"
-version = "0.3.1"
+version = "0.4.0"
 description = "The Kode Dot's I2C chips as plain logic: what an unchanged kode-sdk driver reads and writes"
 edition.workspace = true
 license.workspace = true

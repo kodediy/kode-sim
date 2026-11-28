@@ -1,6 +1,6 @@
 [package]
 name = "kode-emu"
-version = "0.3.1"
+version = "0.4.0"
 description = "A Kode Dot on the desk: unchanged Kode Dot firmware on esp-emu, with the board's chips beside it"
 edition.workspace = true
 license.workspace = true

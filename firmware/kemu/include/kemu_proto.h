@@ -2,7 +2,7 @@
  * @file kemu_proto.h
  * @brief The wire between kemu and the Mac: 'K' 'D', type u8, len u32 LE, payload.
  *
- * crates/kode-sim/src/proto.rs is the other half of this file; the two keep the same
+ * crates/kode-emu/src/proto.rs is the other half of this file; the two keep the same
  * numbers. Pure C, no ESP-IDF, so it builds and is tested on the host.
  */
 #ifndef KEMU_PROTO_H_
@@ -35,7 +35,7 @@
 
 /*
  * Not the firmware's: frames between the page and the Mac, about the
- * board's chips and its sound, which kode-sim answers itself on esp-emu's
+ * board's chips and its sound, which kode-emu answers itself on esp-emu's
  * I2C, GPIO and I2S.
  * kemu never sends or takes them; they are here so the numbers stay
  * taken, and the page's frames share one numbering with kemu's.

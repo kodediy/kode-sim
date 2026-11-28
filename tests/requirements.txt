@@ -1,4 +1,4 @@
-# What kode-sim's tests need (Python 3.12+): python3 -m venv .venv && .venv/bin/pip install -r tests/requirements.txt
+# What kode-emu's tests need (Python 3.12+): python3 -m venv .venv && .venv/bin/pip install -r tests/requirements.txt
 pytest>=8
 pytest-asyncio>=0.23
 aiohttp>=3.9

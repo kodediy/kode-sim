@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
- * A kodeOS app that wants WiFi, for kode-sim's tests: it asks the radio the
+ * A kodeOS app that wants WiFi, for kode-emu's tests: it asks the radio the
  * way an app does, logs every answer, and once it has an address serves a
  * TCP echo on ECHO_PORT - what a server app (KodeCraft's 25565) does. Once
  * the radio has settled, up or failed, it mounts the microSD and asks about

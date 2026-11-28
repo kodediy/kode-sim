@@ -8,9 +8,9 @@
 //! into the app. The name is the image's project name, so that an older
 //! copy of the same app gives its place first.
 //!
-//! Each `kode-sim run` also leaves a note in the cache (running/<pid>.json)
+//! Each `kode-emu run` also leaves a note in the cache (running/<pid>.json)
 //! saying where its serial port and its page are, and takes it away when it
-//! stops, so `kode-sim install` finds the simulator.
+//! stops, so `kode-emu install` finds the simulator.
 //!
 //! `install --mailbox` needs no console: it posts the image to the
 //! simulator's `api/mailbox`, which writes it into app_pending of the flash
@@ -101,7 +101,7 @@ pub fn running_in(dir: &std::path::Path, port: Option<u16>) -> Option<Note> {
 }
 
 /// The note of the simulator started last that is still alive (or the one
-/// whose page is on `port`), from kode-sim's cache.
+/// whose page is on `port`), from kode-emu's cache.
 pub fn running(port: Option<u16>) -> Option<Note> {
     running_in(&crate::emu::cache_dir().join("running"), port)
 }
@@ -366,9 +366,9 @@ const MAILBOX_TIMEOUT: Duration = Duration::from_secs(120);
 /// `api/mailbox`: the simulator writes it into app_pending of the flash
 /// esp-emu is running and resets the chip.
 fn to_mailbox(image: &[u8], name: &str, sim: &Note) -> i32 {
-    eprintln!("kode-sim: putting {name} in the mailbox (app_pending) of the simulator at {}", sim.url);
+    eprintln!("kode-emu: putting {name} in the mailbox (app_pending) of the simulator at {}", sim.url);
     let Some(addr) = page_addr(&sim.url) else {
-        eprintln!("kode-sim: {} is not a page kode-sim can reach", sim.url);
+        eprintln!("kode-emu: {} is not a page kode-emu can reach", sim.url);
         return 1;
     };
     match post(&addr, "/api/mailbox", image, MAILBOX_TIMEOUT) {
@@ -376,31 +376,31 @@ fn to_mailbox(image: &[u8], name: &str, sim: &Note) -> i32 {
             let j: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
             let at = j["offset"].as_u64().unwrap_or(0);
             eprintln!(
-                "kode-sim: {} bytes at 0x{at:x}; the Kode Dot is resetting, and kodeOS adopts the app as it boots",
+                "kode-emu: {} bytes at 0x{at:x}; the Kode Dot is resetting, and kodeOS adopts the app as it boots",
                 image.len()
             );
             0
         }
         Ok((404, _)) => {
             eprintln!(
-                "kode-sim: the simulator at {} takes no mailbox installs (is it an older kode-sim run?)",
+                "kode-emu: the simulator at {} takes no mailbox installs (is it an older kode-emu run?)",
                 sim.url
             );
             1
         }
         Ok((_, body)) => {
             let j: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-            eprintln!("kode-sim: {}", j["error"].as_str().unwrap_or(body.as_str()));
+            eprintln!("kode-emu: {}", j["error"].as_str().unwrap_or(body.as_str()));
             1
         }
         Err(e) => {
-            eprintln!("kode-sim: could not reach the simulator at {}: {e}", sim.url);
+            eprintln!("kode-emu: could not reach the simulator at {}: {e}", sim.url);
             1
         }
     }
 }
 
-/// `kode-sim install`.
+/// `kode-emu install`.
 ///
 /// It finds the simulator before anything else, so nothing is built with
 /// nowhere to install it. PROJECT is a project to build or, a file, an app
@@ -415,7 +415,7 @@ pub fn command(
     let Some(sim) = running(port) else {
         let which = port.map(|p| format!("on port {p}")).unwrap_or_else(|| "running".into());
         eprintln!(
-            "kode-sim: no simulator is {which} - start kodeOS first (kode-sim run and the KodeOS folder), \
+            "kode-emu: no simulator is {which} - start kodeOS first (kode-emu run and the KodeOS folder), \
              then install into it from another terminal"
         );
         return 1;
@@ -431,23 +431,23 @@ pub fn command(
     let image = match std::fs::read(&app) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("kode-sim: {}: {e}", app.display());
+            eprintln!("kode-emu: {}: {e}", app.display());
             return 1;
         }
     };
     if !is_app_image(&image) {
-        eprintln!("kode-sim: {} is not an ESP-IDF app image (.bin)", app.display());
+        eprintln!("kode-emu: {} is not an ESP-IDF app image (.bin)", app.display());
         return 1;
     }
     let name = app.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     if mailbox {
         return to_mailbox(&image, &name, &sim);
     }
-    eprintln!("kode-sim: installing {name} in the simulator at {}", sim.url);
+    eprintln!("kode-emu: installing {name} in the simulator at {}", sim.url);
     let mut console = match SerialPort::open(&sim.serial) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("kode-sim: could not open its serial port {}: {e}", sim.serial);
+            eprintln!("kode-emu: could not open its serial port {}: {e}", sim.serial);
             return 1;
         }
     };
@@ -461,7 +461,7 @@ pub fn command(
     match install(&image, &mut console, &sim.serial, &mut say, PING_TIMEOUT) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("\nkode-sim: {e}");
+            eprintln!("\nkode-emu: {e}");
             1
         }
     }
@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(crc32(b""), 0);
         assert_eq!(crc32(b"The quick brown fox jumps over the lazy dog"), 0x414F_A339);
         assert_eq!(crc32(b"IEND"), 0xAE42_6082, "PNG's IEND chunk");
-        // bit for bit the loop kode-sim had before
+        // bit for bit the loop kode-emu had before
         let reference = |data: &[u8]| {
             let mut crc = !0u32;
             for &b in data {

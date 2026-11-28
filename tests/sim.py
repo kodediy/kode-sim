@@ -1,11 +1,11 @@
-"""`kode-sim run`, from outside: the binary, its page's WebSocket, its serial port.
+"""`kode-emu run`, from outside: the binary, its page's WebSocket, its serial port.
 
-Each simulator gets its own cache (KODE_SIM_CACHE), so its running note
+Each simulator gets its own cache (KODE_EMU_CACHE), so its running note
 and its card stay in the test's folder, never beside the one you have open.
-The esp-emu it runs is $KODE_SIM_ESP_EMU when the person (or a test, for
+The esp-emu it runs is $KODE_EMU_ESP_EMU when the person (or a test, for
 the fake) set it, and otherwise the binary's own: the pinned esp-emu it
-keeps in the person's cache ($KODE_SIM_CACHE as they set it, or
-~/Library/Caches/kode-sim), installed there by the binary on first use. A
+keeps in the person's cache ($KODE_EMU_CACHE as they set it, or
+~/Library/Caches/kode-emu), installed there by the binary on first use. A
 test's cache links esp-emu-<version> to that folder, so the binary finds
 it, or installs it there, and never a second one in the test's folder.
 """
@@ -23,10 +23,10 @@ import aiohttp
 import kd
 
 ROOT = Path(__file__).resolve().parents[1]
-EXE = ROOT / "target" / "release" / "kode-sim"
+EXE = ROOT / "target" / "release" / "kode-emu"
 # The esp-emu the binary pins, read from the source it is built from (emu.rs).
 class Sim:
-    """One `kode-sim run`, its page's port, its note and what it printed."""
+    """One `kode-emu run`, its page's port, its note and what it printed."""
 
     def __init__(self, proc, port, cache, out, err):
         self.proc, self.port, self.cache, self.out, self.err = proc, port, cache, out, err
@@ -72,32 +72,32 @@ class Sim:
         return self.proc.returncode
 
     def stop_clean(self) -> int:
-        """stop(), as a test's teardown: a `kode-sim run` started without
+        """stop(), as a test's teardown: a `kode-emu run` started without
         --exit-on-crash serves its page until it is told to stop, and a
         SIGTERM ends it with 0. Gone before anyone stopped it, ended by a
         signal, killed for not stopping, or any other exit code fails."""
         by_itself = self.proc.poll() is not None and not self.stopped
         rc = self.stop()
         tail = self.stderr()[-2000:]
-        assert not by_itself, f"kode-sim run exited by itself (with {rc}) before its test ended:\n{tail}"
-        assert rc == 0, f"kode-sim run exited with {rc} when stopped:\n{tail}"
+        assert not by_itself, f"kode-emu run exited by itself (with {rc}) before its test ended:\n{tail}"
+        assert rc == 0, f"kode-emu run exited with {rc} when stopped:\n{tail}"
         return rc
 
 
 def env(cache) -> dict:
-    """kode-sim's environment with @cache as its cache. Its esp-emu is the
-    person's $KODE_SIM_ESP_EMU if they set one, or else the one the binary
-    pins and keeps in its tools folder ($KODE_SIM_TOOLS, or the person's
-    cache), which KODE_SIM_CACHE does not move."""
-    e = {**os.environ, "KODE_SIM_CACHE": str(cache)}
-    if not e.get("KODE_SIM_ESP_EMU"):
-        e.pop("KODE_SIM_ESP_EMU", None)
+    """kode-emu's environment with @cache as its cache. Its esp-emu is the
+    person's $KODE_EMU_ESP_EMU if they set one, or else the one the binary
+    pins and keeps in its tools folder ($KODE_EMU_TOOLS, or the person's
+    cache), which KODE_EMU_CACHE does not move."""
+    e = {**os.environ, "KODE_EMU_CACHE": str(cache)}
+    if not e.get("KODE_EMU_ESP_EMU"):
+        e.pop("KODE_EMU_ESP_EMU", None)
     return e
 
 
 async def start(exe, tmp_path, *args, cache=None, sd=True, wait=True, firmware=None, elf=None,
                 up_timeout=20, window=False) -> Sim:
-    """`kode-sim run` on @firmware (by default one that is never read: the fake ignores it).
+    """`kode-emu run` on @firmware (by default one that is never read: the fake ignores it).
     With @wait, until it announces itself; if it does not in @up_timeout s,
     it is stopped and the AssertionError carries it as `.sim`."""
     cache = cache or tmp_path / "cache"
@@ -123,7 +123,7 @@ async def start(exe, tmp_path, *args, cache=None, sd=True, wait=True, firmware=N
             end = loop.time() + up_timeout
             while sim.note() is None and proc.poll() is None and loop.time() < end:
                 await asyncio.sleep(0.05)
-            assert sim.note() is not None, f"kode-sim run never came up: {sim.stderr()}"
+            assert sim.note() is not None, f"kode-emu run never came up: {sim.stderr()}"
         except BaseException as e:           # a timeout, or the test cancelled: nothing left running
             sim.stop()
             e.sim = sim
@@ -158,7 +158,7 @@ def _closed(w, waiting_for) -> EOFError:
     sim = getattr(w, "sim", None)
     if sim is not None:
         rc = sim.proc.poll()
-        why += f"; kode-sim run {'is still running' if rc is None else f'exited with {rc}'}"
+        why += f"; kode-emu run {'is still running' if rc is None else f'exited with {rc}'}"
         why += f"; its stderr ends:\n{sim.stderr()[-2000:]}"
     return EOFError(why)
 

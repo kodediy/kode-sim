@@ -1,4 +1,4 @@
-//! kode-sim: a Kode Dot on the desk.
+//! kode-emu: a Kode Dot on the desk.
 //!
 //! One binary, every command: `build` builds a
 //! project with kemu in it (or, `--board`, as for the board); `run` builds
@@ -32,7 +32,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "kode-sim", version, about = "A Kode Dot on the desk")]
+#[command(name = "kode-emu", version, about = "A Kode Dot on the desk")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -56,7 +56,7 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Build an app and install it in the kodeOS that `kode-sim run` is running.
+    /// Build an app and install it in the kodeOS that `kode-emu run` is running.
     Install {
         /// An ESP-IDF project to build, or an app image already built (.bin)
         project: PathBuf,
@@ -81,7 +81,7 @@ enum Cmd {
     /// Exits 0 when every check passed, 1 when one failed, 2 when the review
     /// could not run at all.
     Review {
-        /// The app built for the simulator (kode-sim build's <app>.bin), or its project to build
+        /// The app built for the simulator (kode-emu build's <app>.bin), or its project to build
         app: PathBuf,
         /// The scenario (JSON); without one, the checks every review makes
         scenario: Option<PathBuf>,
@@ -89,8 +89,8 @@ enum Cmd {
         #[arg(long, default_value = "review")]
         out: PathBuf,
         /// kodeOS built for the simulator (a folder with merged-binary.bin
-        /// and kodeos.elf), or a KodeOS checkout [default: $KODE_SIM_KODEOS]
-        #[arg(long, env = "KODE_SIM_KODEOS")]
+        /// and kodeos.elf), or a KodeOS checkout [default: $KODE_EMU_KODEOS]
+        #[arg(long, env = "KODE_EMU_KODEOS")]
         kodeos: PathBuf,
     },
     /// Build a project, boot it and open the Kode Dot in a window of its own.
@@ -180,7 +180,7 @@ fn main() -> ExitCode {
             exit_on_crash,
             save_state,
         } => {
-            // Held until kode-sim exits: the saved flash is this run's.
+            // Held until kode-emu exits: the saved flash is this run's.
             let mut _flash_lock = None;
             let (firmware, elf) = match (project, firmware) {
                 (Some(project), _) => match build::built(&project, sdk.as_deref(), false) {
@@ -191,7 +191,7 @@ fn main() -> ExitCode {
                             (flash, Some(fw.elf))
                         }
                         Err(e) => {
-                            eprintln!("kode-sim: could not keep a flash beside {}: {e}", fw.merged_bin.display());
+                            eprintln!("kode-emu: could not keep a flash beside {}: {e}", fw.merged_bin.display());
                             return ExitCode::FAILURE;
                         }
                     },

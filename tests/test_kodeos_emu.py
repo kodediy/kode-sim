@@ -165,7 +165,7 @@ async def test_kodeos_takes_a_binary_payload_over_the_console(exe, kodeos, tmp_p
 
 
 async def test_an_app_goes_home_to_kodeos_by_the_held_button_and_by_reset(exe, kodeos, display_lvgl, tmp_path):
-    """kode-sim install's conversation with the real kodeOS: the app goes into
+    """kode-emu install's conversation with the real kodeOS: the app goes into
     the apps region and kodeOS reboots into it. Then the two ways home a
     person has on the board: BOT held (the SDK's CONFIG_KODEOS_HOME_HOLD) and
     the reset (the page's Reset) - after which kodeOS boots, the app still
@@ -229,11 +229,11 @@ async def test_the_way_home_keeps_the_glass_lit(exe, kodeos, display_lvgl, tmp_p
         await k.stop()
 
 
-async def join_kode_sim(k):
+async def join_kode_emu(k):
     """The C5 up, join the one network it sees, as a person would once: the
     vault of a C5 that starts blank holds none."""
     await console_line(k, r"radio radio link=2\b", 90)
-    await k.console_in('wifi_join ssid="kode-sim"')
+    await k.console_in('wifi_join ssid="kode-emu"')
 
 
 async def test_an_app_gets_an_address_and_its_server_is_reachable_from_the_mac(exe, radio, tmp_path):
@@ -241,12 +241,12 @@ async def test_an_app_gets_an_address_and_its_server_is_reachable_from_the_mac(e
     own) over ESP-Hosted, on esp-emu's soft AP. The app asks for WiFi and
     hears what a board on a network says - RADIO_STATE_SIG UP (2),
     WIFI_STATE_SIG GOT_IP (2) with its address - and a TCP server it opens is
-    reached from the Mac through the port `kode-sim run --forward` opens."""
+    reached from the Mac through the port `kode-emu run --forward` opens."""
     port = kd.free_port()
     k = await boot(exe, tmp_path, radio, "--forward", f"{port}:7777")
     try:
         await frame_where(k, lambda t, p: t == kd.HELLO, 30)
-        await join_kode_sim(k)
+        await join_kode_emu(k)
         await console_line(k, r"radio wifi state=2 ip=192\.168\.4\.\d+ enabled=1", 30)
         await console_line(k, r"radio echo listening on 7777", 20)
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
@@ -266,7 +266,7 @@ async def test_with_the_network_up_the_top_button_still_works(exe, radio, tmp_pa
     hears TOP pressed and released."""
     k = await boot(exe, tmp_path, radio)
     try:
-        await join_kode_sim(k)
+        await join_kode_emu(k)
         await console_line(k, r"radio wifi state=2 ip=192\.168\.4\.\d+", 30)
         pad = await console_line(k, r"radio top pad fun_sel=", 10)
         assert "fun_sel=1 ie=1 oe=0" in pad, pad
@@ -280,7 +280,7 @@ async def test_with_the_network_up_the_top_button_still_works(exe, radio, tmp_pa
 
 
 async def test_with_the_c5_dead_an_app_hears_the_radio_failed(exe, radio, tmp_path):
-    """`kode-sim run --no-wifi`: a board whose C5 never comes up. The app
+    """`kode-emu run --no-wifi`: a board whose C5 never comes up. The app
     hears KRADIO_FAILED (4) and WIFI_STATE_SIG with no address, the wish kept."""
     k = await boot(exe, tmp_path, radio, "--no-wifi")
     try:
@@ -295,12 +295,12 @@ async def test_with_the_c5_dead_an_app_hears_the_radio_failed(exe, radio, tmp_pa
 
 async def test_kodeos_mounts_the_card_image_and_a_file_lands_in_it(exe, kodeos, tmp_path):
     """The microSD: esp-emu's SDMMC host with a card image on the Mac in slot
-    0 (`kode-sim run --sd`, made as a Mac formats a card). kodeOS mounts it
+    0 (`kode-emu run --sd`, made as a Mac formats a card). kodeOS mounts it
     as it would a card, and a file put on /sdcard is in the image afterwards."""
     img = tmp_path / "sd" / "card.img"
     k = await boot(exe, tmp_path, kodeos, "--sd", str(img))
     _, until = heard_from(k)
-    data = b"KODE-SIM-SD " * 400 + b"\n"
+    data = b"KODE-EMU-SD " * 400 + b"\n"
     try:
         mounted = await until(r"kdrv\.sd card mounted at /sdcard")
         assert "4-bit" in mounted, mounted              # as the board's slot is wired
@@ -327,7 +327,7 @@ async def test_an_app_that_waits_for_the_radio_finds_its_card_mounted(exe, radio
 
 async def test_kodeos_boots_with_the_clock_set_and_no_network(exe, kodeos, tmp_path):
     """With no network out to ask the time of, a Kode Dot keeps it in its
-    P4's RTC. kode-sim sets that RTC from the Mac's clock at every boot, so
+    P4's RTC. kode-emu sets that RTC from the Mac's clock at every boot, so
     kodeOS boots knowing the time instead of asking for it."""
     k = await boot(exe, tmp_path, kodeos, "--no-internet")
     try:
@@ -349,7 +349,7 @@ async def test_kodeos_boots_with_the_clock_set_and_no_network(exe, kodeos, tmp_p
 @pytest.mark.xfail(reason="#22: an install during the C5's bring-up arrives damaged; on esp-emu 1.3.0 "
                           "the review's install lands in it", strict=False)
 async def test_review_puts_a_real_app_through_kodeos(exe, kodeos, display_lvgl, tmp_path):
-    """kode-sim review end to end: kodeOS boots, the app is installed and
+    """kode-emu review end to end: kodeOS boots, the app is installed and
     boots, the scenario plays, BOT held brings kodeOS back, nothing crashed."""
     os_dir = tmp_path / "kodeos"
     os_dir.mkdir()

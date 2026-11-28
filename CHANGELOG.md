@@ -1,12 +1,26 @@
 # Changelog
 
-What changes from one kode-sim release to the next. The versions follow
+What changes from one kode-emu release to the next. The versions follow
 [SemVer](https://semver.org): until 1.0 a minor release (0.2, 0.3…) may
-change how kode-sim is used, and says so here.
+change how kode-emu is used, and says so here.
 
 ## [Unreleased]
 
+kode-sim is now **kode-emu**: it runs the Kode Dot's own firmware,
+instruction by instruction, so it is an emulator.
+
 ### Changed
+
+- **The new name is everywhere.** The command is `kode-emu`, the repository
+  kodediy/kode-emu (GitHub sends the old address on), the cache
+  `~/Library/Caches/kode-emu` (`~/.cache/kode-emu` on Linux), the
+  environment `KODE_EMU_*` (`KODE_EMU_CACHE`, `KODE_EMU_ESP_EMU`...), and
+  the network the Kode Dot joins `kode-emu`. Coming from kode-sim:
+  - the first run moves the old cache over: esp-emu, the C5's firmware and
+    the card are not fetched or made again. A project is built once more,
+    from scratch, since its build folder was configured where the cache was;
+  - `cargo build --release` makes `target/release/kode-emu`: link it as
+    the README says, and remove `~/.local/bin/kode-sim`.
 
 - **esp-emu 1.3.0** (was 1.2.0). kodeOS boots with no stall while its P4
   talks to the C5 (esp-emulator#70, 0.3.1's known issue): no second of the
@@ -26,7 +40,7 @@ change how kode-sim is used, and says so here.
 - **Console input that arrives while kodeOS brings its C5 link up is
   damaged** (#22): an install or a `file_put` in the first seconds after
   the boot fails with "CRC mismatch". It is not new in esp-emu 1.3.0, but
-  `kode-sim review` installs sooner on it and meets it: its emulator test
+  `kode-emu review` installs sooner on it and meets it: its emulator test
   is marked as a known failure until #22 is understood.
 
 ## [0.3.1] - 2026-11-22

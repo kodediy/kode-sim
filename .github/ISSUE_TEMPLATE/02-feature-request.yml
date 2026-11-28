@@ -5,14 +5,14 @@ body:
   - type: markdown
     attributes:
       value: |
-        Start with the problem, not the solution. Check the [status table and the plans](https://github.com/kodediy/kode-sim#status) first: several parts of the Kode Dot wait for Espressif's emulator, and the table says which.
+        Start with the problem, not the solution. Check the [status table and the plans](https://github.com/kodediy/kode-emu#status) first: several parts of the Kode Dot wait for Espressif's emulator, and the table says which.
 
   - type: checkboxes
     id: checklist
     attributes:
       label: Before you file
       options:
-        - label: I have searched the [open and closed issues](https://github.com/kodediy/kode-sim/issues?q=is%3Aissue) and the status table, and found nothing that covers this.
+        - label: I have searched the [open and closed issues](https://github.com/kodediy/kode-emu/issues?q=is%3Aissue) and the status table, and found nothing that covers this.
           required: true
 
   - type: textarea

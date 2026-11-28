@@ -1,9 +1,9 @@
-//! `kode-sim build`: an unchanged kode-sdk project, or kodeOS, built with
+//! `kode-emu build`: an unchanged kode-sdk project, or kodeOS, built with
 //! kemu linked in.
 //!
 //! The project is never touched: it is copied to a cache directory, and
 //! only the copy's top CMakeLists.txt gets one line - an include of
-//! firmware/kode_sim.cmake right before its project() call. With `board`
+//! firmware/kode_emu.cmake right before its project() call. With `board`
 //! nothing is included: the image a Kode Dot runs.
 
 use std::path::{Path, PathBuf};
@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 /// configures nor solves its dependencies again.
 pub const RSYNC_EXCLUDES: [&str; 7] =
     ["/build", "/build_*", "/managed_components", "/.git", "/sdkconfig", "/sdkconfig.old", "/dependencies.lock"];
-/// The files kode-sim writes into the copy itself, from the project's -
-/// kode-sim included, or pointed at a local kode-sdk - and only when their
+/// The files kode-emu writes into the copy itself, from the project's -
+/// kode-emu included, or pointed at a local kode-sdk - and only when their
 /// text changes: a new mtime on any of them and the build configures again.
 pub const REWRITTEN: [&str; 3] = ["CMakeLists.txt", "sdkconfig.defaults", "main/idf_component.yml"];
 /// What the configuration was last made from (see [`config_stamp`]), next
@@ -51,14 +51,14 @@ pub struct BuildResult {
     pub app_bin: Option<PathBuf>,
 }
 
-/// firmware/kode_sim.cmake in the checkout this binary was built from (as
-/// web/ is), or `$KODE_SIM_FIRMWARE`/kode_sim.cmake.
-pub fn kode_sim_cmake() -> PathBuf {
-    let dir = match std::env::var_os("KODE_SIM_FIRMWARE") {
+/// firmware/kode_emu.cmake in the checkout this binary was built from (as
+/// web/ is), or `$KODE_EMU_FIRMWARE`/kode_emu.cmake.
+pub fn kode_emu_cmake() -> PathBuf {
+    let dir = match std::env::var_os("KODE_EMU_FIRMWARE") {
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../firmware")),
     };
-    resolve(&dir).join("kode_sim.cmake")
+    resolve(&dir).join("kode_emu.cmake")
 }
 
 /// ESP-IDF's environment, sourced before each idf.py: what Espressif's
@@ -124,7 +124,7 @@ pub fn config_stamp(src: &Path, sdk: Option<&Path>, board: bool) -> String {
         .filter(|p| p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("sdkconfig.defaults")))
         .collect();
     defaults.sort();
-    let overlay = (!board).then(|| kode_sim_cmake().with_file_name("sdkconfig.emu"));
+    let overlay = (!board).then(|| kode_emu_cmake().with_file_name("sdkconfig.emu"));
     let kbsp = "components/kbsp/sdkconfig.board";
     let board_settings =
         [sdk.map(|s| s.join(kbsp)), Some(src.join("sdk").join(kbsp)), Some(src.join("main").join("idf_component.yml"))];
@@ -190,7 +190,7 @@ pub fn inject_with(cmakelists: &Path, cmake: &Path) -> Result<String, BuildError
     let lines: Vec<&str> = text.lines().collect();
     let Some(i) = lines.iter().position(|l| l.starts_with("project(")) else {
         return Err(BuildError(format!(
-            "{}: no top-level project() call to put kode-sim in front of",
+            "{}: no top-level project() call to put kode-emu in front of",
             cmakelists.display()
         )));
     };
@@ -202,11 +202,11 @@ pub fn inject_with(cmakelists: &Path, cmake: &Path) -> Result<String, BuildError
 }
 
 pub fn inject(cmakelists: &Path) -> Result<String, BuildError> {
-    inject_with(cmakelists, &kode_sim_cmake())
+    inject_with(cmakelists, &kode_emu_cmake())
 }
 
 /// The project's place in `cache`: its name and the first 8 hex digits of
-/// the SHA-1 of its resolved path, as kode-sim has always named it, so
+/// the SHA-1 of its resolved path, as kode-emu has always named it, so
 /// the builds made before are found.
 pub fn work_dir(cache: &Path, project: &Path, board: bool) -> PathBuf {
     use sha1::{Digest, Sha1};
@@ -218,7 +218,7 @@ pub fn work_dir(cache: &Path, project: &Path, board: bool) -> PathBuf {
 }
 
 /// The work dir's lock, if no other build holds it: one build at a time
-/// in a work dir, as two (two terminals, two checkouts of kode-sim on one
+/// in a work dir, as two (two terminals, two checkouts of kode-emu on one
 /// project) would each sync, configure and link over the other's.
 fn try_lock_work(work: &Path) -> Result<Option<std::fs::File>, BuildError> {
     use std::os::fd::AsRawFd;
@@ -242,7 +242,7 @@ fn lock_work(work: &Path, project: &Path) -> Result<std::fs::File, BuildError> {
     if let Some(f) = try_lock_work(work)? {
         return Ok(f);
     }
-    eprintln!("kode-sim: waiting for another build of {} to finish", project.display());
+    eprintln!("kode-emu: waiting for another build of {} to finish", project.display());
     let path = work.join(".build.lock");
     let file = std::fs::OpenOptions::new()
         .write(true)
@@ -254,7 +254,7 @@ fn lock_work(work: &Path, project: &Path) -> Result<std::fs::File, BuildError> {
     Ok(file)
 }
 
-/// The project's copy, ready to build: kode-sim included, and the
+/// The project's copy, ready to build: kode-emu included, and the
 /// sdkconfig of the last build kept only while what it was made from - the
 /// project's defaults, the emu overlay, the kode-sdk - is unchanged. What
 /// did not change keeps its mtime, so a build of an unchanged project
@@ -361,7 +361,7 @@ pub(crate) fn idf(script: &Path, args: &[String], log: &Path, append: bool) -> R
     // Paths as arguments, never spliced into the script; and none of them
     // in sight of the script sourced, which may read its own.
     const SH: &str = r#"s=$1; a=$2; shift 2; args=("$@"); set --
-. "$s" >"$a" 2>&1 || { st=$?; echo "kode-sim: ESP-IDF's environment did not activate ($s exited $st):"; cat "$a"; exit 1; }
+. "$s" >"$a" 2>&1 || { st=$?; echo "kode-emu: ESP-IDF's environment did not activate ($s exited $st):"; cat "$a"; exit 1; }
 idf.py "${args[@]}""#;
     let activate_log = log.with_extension("activate.log");
     let status = std::process::Command::new("bash")
@@ -377,7 +377,18 @@ idf.py "${args[@]}""#;
     Ok(status.success())
 }
 
-/// Build `project` in kode-sim's cache: `idf.py build merge-bin`, once
+/// `out`, removed when CMake configured it for a source other than `src`:
+/// a cache that moved (kode-sim's, taken over by kode-emu, or one moved by
+/// hand), which idf.py refuses to build in ("configured for project ...").
+fn drop_build_made_elsewhere(src: &Path, out: &Path) {
+    let Ok(cache) = std::fs::read_to_string(out.join("CMakeCache.txt")) else { return };
+    let home = cache.lines().find_map(|l| l.strip_prefix("CMAKE_HOME_DIRECTORY:INTERNAL="));
+    if home.is_some_and(|h| Path::new(h) != src) {
+        let _ = std::fs::remove_dir_all(out);
+    }
+}
+
+/// Build `project` in kode-emu's cache: `idf.py build merge-bin`, once
 /// more when a kode-sdk example has just fetched its kbsp.
 pub fn build(project: &Path, sdk: Option<&Path>, board: bool) -> Result<BuildResult, BuildError> {
     let project = resolve(project);
@@ -387,6 +398,7 @@ pub fn build(project: &Path, sdk: Option<&Path>, board: bool) -> Result<BuildRes
     let src = prepare(&cache, &project, sdk, board)?;
     let work = src.parent().unwrap().to_path_buf();
     let out = work.join("out");
+    drop_build_made_elsewhere(&src, &out);
     let log = work.join("build.log");
     let args: Vec<String> = ["-C".into(), src.display().to_string(), "-B".into(), out.display().to_string()]
         .into_iter()
@@ -422,26 +434,26 @@ pub fn build(project: &Path, sdk: Option<&Path>, board: bool) -> Result<BuildRes
 /// A build as the commands start one: said on the terminal, and its
 /// failure said there too, with the exit code it means.
 pub fn built(project: &Path, sdk: Option<&Path>, board: bool) -> Result<BuildResult, i32> {
-    eprintln!("kode-sim: building {} ...", project.display());
+    eprintln!("kode-emu: building {} ...", project.display());
     match build(project, sdk, board) {
         Ok(fw) => {
-            eprintln!("kode-sim: built {}", fw.merged_bin.display());
+            eprintln!("kode-emu: built {}", fw.merged_bin.display());
             Ok(fw)
         }
         Err(e) => {
-            eprintln!("kode-sim: {e}");
+            eprintln!("kode-emu: {e}");
             Err(1)
         }
     }
 }
 
-/// `kode-sim build`; with `json`, what it built on stdout too (see [`paths_json`]).
+/// `kode-emu build`; with `json`, what it built on stdout too (see [`paths_json`]).
 pub fn command(project: &Path, sdk: Option<&Path>, board: bool, json: bool) -> i32 {
     match built(project, sdk, board) {
         Ok(fw) => {
             if let Some(app) = &fw.app_bin {
                 eprintln!(
-                    "kode-sim: to install it in a running kodeOS: kcli.py -p <its serial port> app-install {}",
+                    "kode-emu: to install it in a running kodeOS: kcli.py -p <its serial port> app-install {}",
                     app.display()
                 );
             }
@@ -540,7 +552,7 @@ pub fn bootable(out: &Path, app_bin: &Path) -> Result<PathBuf, BuildError> {
     if app.len() > part.size as usize {
         return Err(BuildError(format!(
             "{name} is {} bytes and the {} partition it would boot from holds {} bytes: too big to boot on its own. \
-             Run kodeOS in the simulator (kode-sim run <KodeOS>) and `kode-sim install` the app into it, \
+             Run kodeOS in the simulator (kode-emu run <KodeOS>) and `kode-emu install` the app into it, \
              as on the board",
             app.len(),
             part.name,
@@ -618,6 +630,24 @@ if(NOT KBSP_BOOTSTRAPPED)
 endif()
 ";
 
+    #[test]
+    fn a_build_folder_configured_for_another_place_is_started_again() {
+        let t = Tmp::new("moved");
+        let (src, out) = (t.0.join("src"), t.0.join("out"));
+        fs::create_dir_all(&out).unwrap();
+        fs::write(out.join("x.o"), "").unwrap();
+        // Configured for this src: kept.
+        fs::write(out.join("CMakeCache.txt"), format!("CMAKE_HOME_DIRECTORY:INTERNAL={}\n", src.display())).unwrap();
+        drop_build_made_elsewhere(&src, &out);
+        assert!(out.join("x.o").exists());
+        // Configured where the cache was before it moved (kode-sim's): gone.
+        fs::write(out.join("CMakeCache.txt"), "CMAKE_HOME_DIRECTORY:INTERNAL=/old/kode-sim/app/src\n").unwrap();
+        drop_build_made_elsewhere(&src, &out);
+        assert!(!out.exists());
+        // Nothing configured yet: nothing to do.
+        drop_build_made_elsewhere(&src, &out);
+    }
+
     /// A folder of the test's own, gone when it ends.
     pub(crate) struct Tmp(pub PathBuf);
 
@@ -626,7 +656,7 @@ endif()
             use std::sync::atomic::{AtomicUsize, Ordering};
             static N: AtomicUsize = AtomicUsize::new(0);
             let p = std::env::temp_dir().join(format!(
-                "kode-sim-test-{tag}-{}-{}",
+                "kode-emu-test-{tag}-{}-{}",
                 std::process::id(),
                 N.fetch_add(1, Ordering::SeqCst)
             ));
@@ -660,7 +690,7 @@ endif()
     }
 
     fn cmake() -> PathBuf {
-        PathBuf::from("/kode-sim/firmware/kode_sim.cmake")
+        PathBuf::from("/kode-emu/firmware/kode_emu.cmake")
     }
 
     fn include() -> String {
@@ -720,8 +750,8 @@ endif()
 
     #[test]
     fn the_injected_file_is_the_checkout_s() {
-        let c = kode_sim_cmake();
-        assert!(c.is_absolute() && c.ends_with("firmware/kode_sim.cmake") && c.exists(), "{}", c.display());
+        let c = kode_emu_cmake();
+        assert!(c.is_absolute() && c.ends_with("firmware/kode_emu.cmake") && c.exists(), "{}", c.display());
         assert!(!c.to_string_lossy().contains(".."), "{}", c.display());
     }
 
@@ -780,7 +810,7 @@ endif()
         fs::write(proj.join("sdkconfig.defaults"), "CONFIG_A=y\n").unwrap();
         let src = prepare(&cache, &proj, None, false).unwrap();
         assert!(!src.join("sdkconfig").exists() && !src.join("sdkconfig.old").exists());
-        assert!(fs::read_to_string(src.join("CMakeLists.txt")).unwrap().contains("kode_sim.cmake"));
+        assert!(fs::read_to_string(src.join("CMakeLists.txt")).unwrap().contains("kode_emu.cmake"));
         assert_eq!(fs::read_to_string(proj.join("CMakeLists.txt")).unwrap(), BUTTONS_LED, "the project is untouched");
     }
 
@@ -869,7 +899,7 @@ endif()
         assert_eq!(before, after, "rewritten although nothing changed");
         assert_eq!(fs::read_to_string(src.join("sdkconfig")).unwrap(), "CONFIG_FROM_THE_LAST_BUILD=y\n");
         assert_eq!(fs::read_to_string(src.join("dependencies.lock")).unwrap(), "solved\n");
-        assert!(fs::read_to_string(src.join("CMakeLists.txt")).unwrap().contains("kode_sim.cmake"));
+        assert!(fs::read_to_string(src.join("CMakeLists.txt")).unwrap().contains("kode_emu.cmake"));
         assert!(fs::read_to_string(src.join("main/idf_component.yml")).unwrap().contains("override_path: /sdk"));
     }
 
@@ -1069,7 +1099,7 @@ endif()
         let src = prepare(&t.0.join("cache"), &proj, Some(Path::new("/sdk")), false).unwrap();
         let top = fs::read_to_string(src.join("CMakeLists.txt")).unwrap();
         assert!(top.starts_with("set(X /sdk/components/kbsp/kbsp.cmake)\n"), "{top}");
-        assert!(top.contains("kode_sim.cmake"));
+        assert!(top.contains("kode_emu.cmake"));
         let defaults = fs::read_to_string(src.join("sdkconfig.defaults")).unwrap();
         assert_eq!(defaults, "CONFIG_A=/sdk/components/kbsp/x\n");
         let manifest = fs::read_to_string(src.join("main").join("idf_component.yml")).unwrap();
@@ -1172,7 +1202,7 @@ endif()
         .unwrap();
         let e = bootable(&out, &out.join("app.bin")).unwrap_err();
         assert!(e.0.contains("app.bin is 1005 bytes") && e.0.contains("factory") && e.0.contains("512 bytes"), "{e}");
-        assert!(e.0.contains("kodeOS") && e.0.contains("kode-sim install"), "{e}");
+        assert!(e.0.contains("kodeOS") && e.0.contains("kode-emu install"), "{e}");
     }
 
     #[test]

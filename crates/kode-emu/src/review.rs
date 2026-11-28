@@ -1,4 +1,4 @@
-//! `kode-sim review`: an app put through a scenario, headless, with a verdict.
+//! `kode-emu review`: an app put through a scenario, headless, with a verdict.
 //!
 //! For apps.kode.diy's review: one emulator per review, kodeOS booted from
 //! its own image, the app installed as a person would install it, a
@@ -39,7 +39,7 @@ impl std::fmt::Display for ReviewError {
     }
 }
 
-/// In every image kode-sim builds; never in one built for the board.
+/// In every image kode-emu builds; never in one built for the board.
 const SIM_MARK: &[u8] = b"kemu_rx";
 const BUTTONS: [(&str, u8); 7] = [
     ("top", kodedot_chips::BTN_TOP),
@@ -104,7 +104,7 @@ pub fn check_image(image: &[u8]) -> Result<(), ReviewError> {
     }
     if !image.windows(SIM_MARK.len()).any(|w| w == SIM_MARK) {
         return Err(ReviewError(
-            "an app built for the board, not for the simulator: build it with `kode-sim build` and review \
+            "an app built for the board, not for the simulator: build it with `kode-emu build` and review \
              build/…/out/<app>.bin"
                 .into(),
         ));
@@ -447,7 +447,7 @@ impl Run {
     fn shoot(&mut self, name: &str) {
         let file = format!("{name}.png");
         if let Err(e) = std::fs::write(self.out.join(&file), png(&self.bridge.framebuffer(), W, H)) {
-            eprintln!("kode-sim review: could not write {}: {e}", self.out.join(&file).display());
+            eprintln!("kode-emu review: could not write {}: {e}", self.out.join(&file).display());
             return;
         }
         if !self.shots.contains(&file) {
@@ -637,7 +637,7 @@ pub async fn review(image: &[u8], kodeos: &KodeOs, scenario: &Value, out: &Path)
     let stop = stop_signal();
     let t0 = Instant::now();
     let tmp = std::env::temp_dir().join(format!(
-        "kode-sim-review-{}-{}",
+        "kode-emu-review-{}-{}",
         std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()
     ));
@@ -771,12 +771,12 @@ fn kodeos(path: &Path) -> Result<KodeOs, ReviewError> {
     if merged_bin.exists() && elf.exists() {
         return Ok(KodeOs { merged_bin, elf });
     }
-    eprintln!("kode-sim: building {} ...", path.display());
+    eprintln!("kode-emu: building {} ...", path.display());
     let fw = crate::build::build(path, None, false).map_err(|e| ReviewError(e.0))?;
     Ok(KodeOs { merged_bin: fw.merged_bin, elf: fw.elf })
 }
 
-/// `kode-sim review`: 0 when every check passed, 1 when one failed, 2 when
+/// `kode-emu review`: 0 when every check passed, 1 when one failed, 2 when
 /// the review could not run.
 pub async fn command(app: &Path, scenario: Option<&Path>, out: &Path, kodeos_at: &Path) -> i32 {
     let verdict = async {
@@ -789,7 +789,7 @@ pub async fn command(app: &Path, scenario: Option<&Path>, out: &Path, kodeos_at:
             None => json!({}),
         };
         let image = if app.is_dir() {
-            eprintln!("kode-sim: building {} ...", app.display());
+            eprintln!("kode-emu: building {} ...", app.display());
             let fw = crate::build::build(app, None, false).map_err(|e| ReviewError(e.0))?;
             let bin = fw.app_bin.expect("a build leaves its app");
             std::fs::read(&bin).map_err(|e| io(&bin, e))?
@@ -805,12 +805,12 @@ pub async fn command(app: &Path, scenario: Option<&Path>, out: &Path, kodeos_at:
     let verdict = match verdict {
         Ok(v) => v,
         Err(Ended::Cannot(e)) => {
-            eprintln!("kode-sim review: {e}");
+            eprintln!("kode-emu review: {e}");
             return 2;
         }
         Err(Ended::Stopped(sig)) => {
             eprintln!(
-                "kode-sim review: stopped by signal {sig}: no verdict; the emulator is stopped and its files gone"
+                "kode-emu review: stopped by signal {sig}: no verdict; the emulator is stopped and its files gone"
             );
             return 128 + sig;
         }
@@ -827,7 +827,7 @@ pub async fn command(app: &Path, scenario: Option<&Path>, out: &Path, kodeos_at:
     }
     let ok = verdict["ok"] == true;
     eprintln!(
-        "kode-sim review: {} in {}s; {}",
+        "kode-emu review: {} in {}s; {}",
         if ok { "passed" } else { "failed" },
         verdict["duration_s"],
         out.join("verdict.json").display()
@@ -1036,7 +1036,7 @@ mod tests {
 
     #[test]
     fn a_review_s_temp_dir_goes_with_it() {
-        let dir = std::env::temp_dir().join(format!("kode-sim-test-tempdir-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kode-emu-test-tempdir-{}", std::process::id()));
         let tmp = TempDir::new(dir.clone()).unwrap();
         std::fs::write(tmp.path().join("flash.bin"), b"x").unwrap();
         assert!(dir.exists());

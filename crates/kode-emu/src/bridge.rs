@@ -463,7 +463,7 @@ impl Bridge {
     pub async fn power_on(self: &Arc<Self>) -> Result<(), String> {
         let _one = self.powering.lock().await;
         if *self.closing.borrow() {
-            return Err("kode-sim is stopping".into());
+            return Err("kode-emu is stopping".into());
         }
         if self.lock().state == "running" {
             return Ok(());
@@ -494,7 +494,7 @@ impl Bridge {
         let mut closing = self.closing.subscribe();
         let (emu, wiring) = tokio::select! {
             launched = emu::launch(&launch, Arc::new(move |l| me.line(&l))) => launched?,
-            _ = closing.wait_for(|c| *c) => return Err("kode-sim is stopping".into()),
+            _ = closing.wait_for(|c| *c) => return Err("kode-emu is stopping".into()),
         };
         self.lock().emu = Some(emu.clone());
         self.start_usb();
@@ -696,7 +696,7 @@ impl Bridge {
             // joins the one network the simulator has once, as they would
             // their own. An app that asks for WiFi then gets an address, as
             // on a board that knows its network.
-            self.line(&format!("[kode-sim] joining {} for you: the C5 knows no network yet", crate::c5::SSID));
+            self.line(&format!("[kode-emu] joining {} for you: the C5 knows no network yet", crate::c5::SSID));
             self.console_in(&format!("wifi_join ssid=\"{}\"", crate::c5::SSID));
         }
     }
@@ -811,9 +811,9 @@ impl Bridge {
     async fn power_on_from_page(self: &Arc<Self>) {
         if let Err(e) = self.power_on().await {
             if *self.closing.borrow() {
-                return; // given up because kode-sim is stopping: no crash
+                return; // given up because kode-emu is stopping: no crash
             }
-            eprintln!("kode-sim: {e}");
+            eprintln!("kode-emu: {e}");
             self.set_state("crashed", &e);
         }
     }
@@ -839,7 +839,7 @@ impl Bridge {
         let emu = self.lock().running_emu().cloned();
         if let Some(emu) = emu {
             if let Err(e) = emu.reset().await {
-                eprintln!("kode-sim: the reset did not reach esp-emu: {e}");
+                eprintln!("kode-emu: the reset did not reach esp-emu: {e}");
             }
         }
     }
@@ -893,12 +893,12 @@ impl Bridge {
         };
         if let Some(emu) = running {
             self.line(&format!(
-                "[kode-sim] the card {}: the Kode Dot restarts with it, as esp-emu cannot change the slot while it runs",
+                "[kode-emu] the card {}: the Kode Dot restarts with it, as esp-emu cannot change the slot while it runs",
                 if sd_in { "goes in" } else { "comes out" }
             ));
             emu.stop().await;
             if let Err(e) = self.power_on().await {
-                self.line(&format!("[kode-sim] the Kode Dot did not come back: {e}"));
+                self.line(&format!("[kode-emu] the Kode Dot did not come back: {e}"));
             }
         }
     }
@@ -1020,7 +1020,7 @@ impl Bridge {
                         shown = d * 10 / t;
                     }
                 }
-                me.line(&format!("[kode-sim] {text}"));
+                me.line(&format!("[kode-emu] {text}"));
             };
             install::install(&image, &mut port, "the simulator's console", &mut say, install::PING_TIMEOUT)
         });
@@ -1038,7 +1038,7 @@ impl Bridge {
     pub async fn mailbox(self: &Arc<Self>, one: Installing, image: Vec<u8>) -> Result<u32, String> {
         let emu = self.lock().running_emu().cloned().ok_or("the Kode Dot is off")?;
         let dir = TempDir::new(&format!(
-            "kode-sim-mailbox-{}-{}",
+            "kode-emu-mailbox-{}-{}",
             std::process::id(),
             self.next_id.fetch_add(1, Ordering::SeqCst)
         ))?;
@@ -1062,7 +1062,7 @@ impl Bridge {
         let at = install::mailbox_slot(&t, image.len())?;
         let app = dir.join("app.bin");
         std::fs::write(&app, image).map_err(|e| format!("could not write {}: {e}", app.display()))?;
-        self.line(&format!("[kode-sim] {} bytes into the mailbox (app_pending, 0x{at:x}); resetting", image.len()));
+        self.line(&format!("[kode-emu] {} bytes into the mailbox (app_pending, 0x{at:x}); resetting", image.len()));
         emu.control(&format!("write-region 0x{at:x} {}", app.display()), Duration::from_secs(60))
             .await
             .map_err(said)?;
@@ -1173,7 +1173,7 @@ mod tests {
             "!N 3741 kaos.radio C5: KODE services v3, 0 networks, 0 BLE keys, identity 0x00; heap 114016 B free"
         ));
         assert!(!first_join("!N 3741 kaos.radio C5: KODE services v3, 1 networks, 0 BLE keys, identity 0x00"));
-        assert!(!first_join("[kode-sim] joining kode-sim for you: the C5 knows no network yet"));
+        assert!(!first_join("[kode-emu] joining kode-emu for you: the C5 knows no network yet"));
     }
 
     /// Whatever the queue has now, and how many times it said the page

@@ -19,7 +19,7 @@ pub const PANEL: u8 = 0x11;
 pub const FB_PACKED: u8 = 0x12;
 pub const LED: u8 = 0x20;
 pub const HAPTIC: u8 = 0x21;
-/// rate u32, ch u8, then s16le: the speaker, kode-sim to the page (the
+/// rate u32, ch u8, then s16le: the speaker, kode-emu to the page (the
 /// sound is esp-emu's I2S, not kemu's).
 pub const PCM_OUT: u8 = 0x30;
 /// rate u32, ch u8: the Mac's microphone is on; the page sends PCM_IN.
@@ -30,7 +30,7 @@ pub const POWER_OFF: u8 = 0x40;
 pub const TOUCH: u8 = 0x80;
 pub const BUTTONS: u8 = 0x81;
 /// s16le at the last MIC_START's rate: the Mac's microphone, page to
-/// kode-sim, for the codec's receiver.
+/// kode-emu, for the codec's receiver.
 pub const PCM_IN: u8 = 0x82;
 pub const BATTERY: u8 = 0x83;
 /// Raw console input: the board's USB-Serial/JTAG RX.

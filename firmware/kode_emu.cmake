@@ -1,4 +1,4 @@
-# Included by kode-sim into a *copy* of the project's top CMakeLists.txt,
+# Included by kode-emu into a *copy* of the project's top CMakeLists.txt,
 # right before its project() call - after everything the project set itself.
 #
 # Appends, never sets: kodeOS sets EXTRA_COMPONENT_DIRS and the examples set

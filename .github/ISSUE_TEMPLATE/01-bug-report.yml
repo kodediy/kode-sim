@@ -12,7 +12,7 @@ body:
     attributes:
       label: Before you file
       options:
-        - label: I have searched the [open and closed issues](https://github.com/kodediy/kode-sim/issues?q=is%3Aissue) and found nothing that covers this.
+        - label: I have searched the [open and closed issues](https://github.com/kodediy/kode-emu/issues?q=is%3Aissue) and found nothing that covers this.
           required: true
         - label: I have reproduced it on the latest release, or on `main`.
           required: true
@@ -20,8 +20,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: kode-sim version and computer
-      description: "`kode-sim --version`, and your system: for example macOS 15 on an M2, or Ubuntu 24.04 on x86_64."
+      label: kode-emu version and computer
+      description: "`kode-emu --version`, and your system: for example macOS 15 on an M2, or Ubuntu 24.04 on x86_64."
     validations:
       required: true
 
@@ -30,7 +30,7 @@ body:
     attributes:
       label: What you ran
       description: The command, and the firmware it ran (kodeOS, an app, a kode-sdk example) with the version or commit of each.
-      placeholder: kode-sim run --sdk ~/kode-sdk ~/kode-sdk/examples/display_lvgl
+      placeholder: kode-emu run --sdk ~/kode-sdk ~/kode-sdk/examples/display_lvgl
       render: text
     validations:
       required: true
@@ -41,7 +41,7 @@ body:
       label: Area
       description: Where the problem shows. "Not sure" is a fine answer.
       options:
-        - Build (kode-sim build)
+        - Build (kode-emu build)
         - Window and page
         - Screen and touch
         - Buttons and LED
@@ -51,8 +51,8 @@ body:
         - WiFi and network
         - USB (the page's computer)
         - Motion (IMU, magnetometer)
-        - Installing apps (kode-sim install)
-        - Reviews (kode-sim review)
+        - Installing apps (kode-emu install)
+        - Reviews (kode-emu review)
         - Not sure
     validations:
       required: true
@@ -88,7 +88,7 @@ body:
     id: logs
     attributes:
       label: Console and terminal output
-      description: What the terminal that runs kode-sim printed around the failure, and the page's console ("Settings" > Console). For a crash, from the first error line to the end.
+      description: What the terminal that runs kode-emu printed around the failure, and the page's console ("Settings" > Console). For a crash, from the first error line to the end.
       render: text
 
   - type: textarea

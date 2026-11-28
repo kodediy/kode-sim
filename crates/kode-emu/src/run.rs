@@ -1,4 +1,4 @@
-//! `kode-sim run`: boot a built firmware and serve the Kode Dot to the browser.
+//! `kode-emu run`: boot a built firmware and serve the Kode Dot to the browser.
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -55,7 +55,7 @@ pub fn saved_flash(merged: &Path) -> std::io::Result<(PathBuf, std::fs::File)> {
         std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(work.join("flash.bin.lock"))?;
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err(std::io::Error::other(format!(
-            "{} is in another simulator's hands (kode-sim run --save-state): stop that one first",
+            "{} is in another simulator's hands (kode-emu run --save-state): stop that one first",
             flash.display()
         )));
     }
@@ -79,16 +79,16 @@ const WINDOW_GONE: std::time::Duration = std::time::Duration::from_secs(3);
 /// firmware crashed under `--exit-on-crash`, 1 when it could not start.
 pub async fn run(a: Args) -> i32 {
     if !a.sd.exists() {
-        eprintln!("kode-sim: making a card image at {} (1 GB, FAT32) ...", a.sd.display());
+        eprintln!("kode-emu: making a card image at {} (1 GB, FAT32) ...", a.sd.display());
         if let Err(e) = sdcard::make_card(&a.sd, sdcard::DEFAULT_MB, sdcard::LABEL) {
-            eprintln!("kode-sim: {e}");
+            eprintln!("kode-emu: {e}");
             return 1;
         }
     }
     let listener = match tokio::net::TcpListener::bind(("127.0.0.1", a.port)).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("kode-sim: could not serve the page on 127.0.0.1:{}: {e}", a.port);
+            eprintln!("kode-emu: could not serve the page on 127.0.0.1:{}: {e}", a.port);
             return 1;
         }
     };
@@ -109,7 +109,7 @@ pub async fn run(a: Args) -> i32 {
         sd_in: a.sd_in,
     });
     // Not println!, which panics once the terminal's pipe is closed
-    // (`kode-sim run | head`): those lines are lost there, and nowhere else.
+    // (`kode-emu run | head`): those lines are lost there, and nowhere else.
     bridge.on_line(Box::new(|line| {
         let _ = writeln!(std::io::stdout().lock(), "{line}");
     }));
@@ -123,7 +123,7 @@ pub async fn run(a: Args) -> i32 {
         started = bridge.start() => match started {
             Ok(()) => serve(&bridge, &a, &mut states, &mut stop).await,
             Err(e) => {
-                eprintln!("kode-sim: {e}");
+                eprintln!("kode-emu: {e}");
                 1
             }
         },
@@ -159,21 +159,21 @@ async fn serve(
 ) -> i32 {
     let url = format!("http://127.0.0.1:{}/", bridge.cfg.http_port);
     let serial = bridge.serial_path().unwrap_or_default();
-    eprintln!("kode-sim: the Kode Dot is at {url}  (Ctrl-C to stop)");
-    eprintln!("kode-sim: its console is the serial port {serial}  (kcli.py -p {serial} ...)");
-    eprintln!("kode-sim: install an app in it from another terminal: kode-sim install path/to/the/app");
+    eprintln!("kode-emu: the Kode Dot is at {url}  (Ctrl-C to stop)");
+    eprintln!("kode-emu: its console is the serial port {serial}  (kcli.py -p {serial} ...)");
+    eprintln!("kode-emu: install an app in it from another terminal: kode-emu install path/to/the/app");
     if !a.wifi {
-        eprintln!("kode-sim: no WiFi - its C5 never comes up");
+        eprintln!("kode-emu: no WiFi - its C5 never comes up");
     }
     if a.restrict {
-        eprintln!("kode-sim: its network lets nothing out but DNS");
+        eprintln!("kode-emu: its network lets nothing out but DNS");
     }
-    eprintln!("kode-sim: its microSD is {}{}", a.sd.display(), if a.sd_in { "" } else { " (out of the slot for now)" });
+    eprintln!("kode-emu: its microSD is {}{}", a.sd.display(), if a.sd_in { "" } else { " (out of the slot for now)" });
     for (h, g) in &a.forwards {
-        eprintln!("kode-sim: 127.0.0.1:{h} on this Mac reaches the Kode Dot's port {g}");
+        eprintln!("kode-emu: 127.0.0.1:{h} on this Mac reaches the Kode Dot's port {g}");
     }
     if let Err(e) = install::announce(&serial, &url) {
-        eprintln!("kode-sim: could not leave a note for kode-sim install: {e}");
+        eprintln!("kode-emu: could not leave a note for kode-emu install: {e}");
     }
     // The window's browser: when it goes, the window was closed, and so is
     // the simulator.
@@ -182,7 +182,7 @@ async fn serve(
     // The terminal is the device's console too. A thread of its own: a
     // read from a terminal cannot be abandoned, and the process exits
     // without waiting for it.
-    // Run in the background of a shell (`kode-sim run &`), a read from the
+    // Run in the background of a shell (`kode-emu run &`), a read from the
     // terminal would stop the whole process (SIGTTIN): ignored, the read
     // fails with EIO instead, and is tried again until the job is in front.
     unsafe { libc::signal(libc::SIGTTIN, libc::SIG_IGN) };
@@ -215,17 +215,17 @@ async fn serve(
                 if bridge.page_count() > 0 || !bridge.ever_joined() {
                     empty_since = None;
                 } else if empty_since.get_or_insert_with(std::time::Instant::now).elapsed() >= WINDOW_GONE {
-                    eprintln!("kode-sim: its window was closed");
+                    eprintln!("kode-emu: its window was closed");
                     return 0;
                 }
             }
             _ = async { window.as_mut().unwrap().wait().await }, if window.is_some() => {
-                eprintln!("kode-sim: its window was closed");
+                eprintln!("kode-emu: its window was closed");
                 return 0;
             }
             Some((state, detail)) = states.recv() => {
                 if state == "crashed" {
-                    eprintln!("kode-sim: the firmware crashed - {}", detail.lines().next().unwrap_or(""));
+                    eprintln!("kode-emu: the firmware crashed - {}", detail.lines().next().unwrap_or(""));
                     if a.exit_on_crash {
                         return 2;
                     }
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn a_project_s_saved_flash_outlives_its_next_build_until_the_build_changes() {
-        let work = std::env::temp_dir().join(format!("kode-sim-test-{}-flash", std::process::id()));
+        let work = std::env::temp_dir().join(format!("kode-emu-test-{}-flash", std::process::id()));
         let out = work.join("out");
         std::fs::create_dir_all(&out).unwrap();
         let merged = out.join("merged-binary.bin");
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn a_saved_flash_is_in_one_simulator_at_a_time() {
-        let work = std::env::temp_dir().join(format!("kode-sim-test-{}-flashlock", std::process::id()));
+        let work = std::env::temp_dir().join(format!("kode-emu-test-{}-flashlock", std::process::id()));
         let out = work.join("out");
         std::fs::create_dir_all(&out).unwrap();
         let merged = out.join("merged-binary.bin");

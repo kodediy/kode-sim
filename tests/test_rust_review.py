@@ -1,4 +1,4 @@
-"""`kode-sim review`, from outside: the binary and the fake esp-emu.
+"""`kode-emu review`, from outside: the binary and the fake esp-emu.
 
 The checks, verdict.json, console.log, the screenshots and the exit codes
 0, 1 and 2. The buttons and the taps go to the board's chips in-process;
@@ -32,7 +32,7 @@ def run(exe, tmp, kodeos, app, scenario):
     s.write_text(json.dumps(scenario))
     out = tmp / "out"
     p = subprocess.run([str(exe), "review", str(app), str(s), "--out", str(out), "--kodeos", str(kodeos)],
-                       env={**os.environ, "KODE_SIM_CACHE": str(tmp / "cache")},
+                       env={**os.environ, "KODE_EMU_CACHE": str(tmp / "cache")},
                        capture_output=True, text=True, timeout=120)
     verdict = json.loads((out / "verdict.json").read_text()) if (out / "verdict.json").exists() else None
     return p.returncode, verdict, out, p.stderr
@@ -65,7 +65,7 @@ def test_an_app_that_does_what_the_scenario_asks_passes(exe, setup):
     assert "Project name:     app" in log
     stamped = (out / "console.log").read_bytes().decode().split("\n")[:-1]     # a line may hold a \r
     assert all(line[9] == " " and float(line[:9]) >= 0 for line in stamped), log[:200]
-    assert "ok   installs" in err and "kode-sim review: passed in " in err
+    assert "ok   installs" in err and "kode-emu review: passed in " in err
 
 
 def test_a_screenshot_is_the_screen_as_a_png(exe, setup):
@@ -90,7 +90,7 @@ def test_an_app_that_crashes_fails(exe, setup):
     assert rc == 1
     assert checks(v)["no_crash"] is False
     assert "Guru Meditation" in next(c["detail"] for c in v["checks"] if c["name"] == "no_crash")
-    assert "FAIL no_crash: " in err and "kode-sim review: failed in " in err
+    assert "FAIL no_crash: " in err and "kode-emu review: failed in " in err
 
 
 def test_what_the_console_never_says_fails_the_review(exe, setup):
@@ -161,11 +161,11 @@ def test_a_review_that_cannot_run_exits_2(exe, setup):
 def test_the_kodeos_folder_comes_from_the_environment(exe, setup):
     tmp, kodeos, app = setup
     p = subprocess.run([str(exe), "review", str(app), "--out", str(tmp / "out")],
-                       env={**os.environ, "KODE_SIM_KODEOS": str(kodeos)},
+                       env={**os.environ, "KODE_EMU_KODEOS": str(kodeos)},
                        capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stderr
     p = subprocess.run([str(exe), "review", str(app)], env={k: v for k, v in os.environ.items()
-                                                             if k != "KODE_SIM_KODEOS"},
+                                                             if k != "KODE_EMU_KODEOS"},
                        capture_output=True, text=True, timeout=60)
     assert p.returncode == 2 and "--kodeos" in p.stderr
 
@@ -177,7 +177,7 @@ def run_in(exe, tmp, kodeos, app, scenario):
     s = tmp / "scenario.json"
     s.write_text(json.dumps(scenario))
     p = subprocess.run([str(exe), "review", str(app), str(s), "--out", str(tmp / "out"), "--kodeos", str(kodeos)],
-                       env={**os.environ, "KODE_SIM_CACHE": str(tmp / "cache"), "TMPDIR": str(t)},
+                       env={**os.environ, "KODE_EMU_CACHE": str(tmp / "cache"), "TMPDIR": str(t)},
                        capture_output=True, text=True, timeout=120)
     return p, t
 
@@ -189,7 +189,7 @@ def test_a_time_no_clock_can_count_is_not_played(exe, setup):
                      {"steps": [{"expect_console": "x", "timeout_s": 1e300}]}]:
         p, t = run_in(exe, tmp, kodeos, app, scenario)
         assert p.returncode == 2 and "from 0 to" in p.stderr, (scenario, p.returncode, p.stderr)
-        assert list(t.glob("kode-sim-review-*")) == [], scenario
+        assert list(t.glob("kode-emu-review-*")) == [], scenario
 
 
 def test_a_screenshot_goes_nowhere_but_the_out_folder(exe, setup):
@@ -222,11 +222,11 @@ def test_a_review_stopped_by_a_signal_leaves_nothing_behind(exe, setup, fake_emu
     s.write_text(json.dumps({"settle_s": 0.2, "steps": [{"wait": 60}]}))
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         p = subprocess.Popen([str(exe), "review", str(app), str(s), "--out", str(tmp / "out"), "--kodeos", str(kodeos)],
-                             env={**os.environ, "KODE_SIM_CACHE": str(tmp / "cache"), "TMPDIR": str(t)},
+                             env={**os.environ, "KODE_EMU_CACHE": str(tmp / "cache"), "TMPDIR": str(t)},
                              stderr=subprocess.PIPE, text=True)
         try:
             end = time.time() + 30
-            while not list(t.glob("kode-sim-review-*/flash.bin")) or not fake_emu.exists():
+            while not list(t.glob("kode-emu-review-*/flash.bin")) or not fake_emu.exists():
                 assert time.time() < end and p.poll() is None, "the review never started"
                 time.sleep(0.1)
             time.sleep(1.5)                                  # booted, installing or playing
@@ -238,6 +238,6 @@ def test_a_review_stopped_by_a_signal_leaves_nothing_behind(exe, setup, fake_emu
         err = p.stderr.read()
         assert rc == 128 + sig, (sig, rc, err)
         assert "stopped by" in err, err
-        assert list(t.glob("kode-sim-review-*")) == [], (sig, list(t.iterdir()))
+        assert list(t.glob("kode-emu-review-*")) == [], (sig, list(t.iterdir()))
         left = subprocess.run(["pgrep", "-f", str(t)], capture_output=True, text=True)
         assert left.stdout.strip() == "", f"esp-emu left running: {left.stdout}"

@@ -1,4 +1,4 @@
-# kode-sim is the Rust binary (crates/kode-sim). This file is only the
+# kode-emu is the Rust binary (crates/kode-emu). This file is only the
 # pytest configuration of its tests; their tools are in tests/requirements.txt.
 
 [tool.pytest.ini_options]

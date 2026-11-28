@@ -60,13 +60,13 @@ let retryMs = 1000;
 
 // The Mac's microphone is on unless it was turned off here (remembered).
 function micWanted() {
-  try { return localStorage.getItem("kode-sim.mic") !== "off"; } catch (_) { return true; }
+  try { return localStorage.getItem("kode-emu.mic") !== "off"; } catch (_) { return true; }
 }
 
 function connect() {
   ws = new WebSocket(WS_URL);
   ws.binaryType = "arraybuffer";
-  // The sound starts by itself where the browser lets it (kode-sim's own
+  // The sound starts by itself where the browser lets it (kode-emu's own
   // window does); elsewhere the first click on the device starts it.
   ws.onopen = () => {
     audioUnlock().catch(() => {});
@@ -78,7 +78,7 @@ function connect() {
   };
   ws.onclose = () => {
     micStop();
-    if (state !== "busy") setState("off", "No connection to kode-sim; trying again…", true);
+    if (state !== "busy") setState("off", "No connection to kode-emu; trying again…", true);
     setTimeout(connect, retryMs);
     retryMs = 1000;
   };
@@ -247,21 +247,21 @@ function setState(s, detail = "", local = false) {
 
 function powerOn() { sendJson({ power: "on" }); }
 $("power").onclick = powerOn;
-// An app built for the simulator (kode-sim build prints its .bin), into this
+// An app built for the simulator (kode-emu build prints its .bin), into this
 // Kode Dot's kodeOS, which then boots it.
 $("app").onchange = async () => {
   const file = $("app").files[0];
   $("app").value = "";
   if (!file) return;
-  log(`[kode-sim] uploading ${file.name} (${Math.round(file.size / 1024)} KB)…`);
+  log(`[kode-emu] uploading ${file.name} (${Math.round(file.size / 1024)} KB)…`);
   try {
     const r = await fetch("api/install", { method: "POST", body: file,
                                            headers: { "Content-Type": "application/octet-stream" } });
     const j = await r.json();
-    log(j.ok ? `[kode-sim] ${file.name} installed; kodeOS starts it`
-             : `[kode-sim] could not install ${file.name}: ${j.error}`);
+    log(j.ok ? `[kode-emu] ${file.name} installed; kodeOS starts it`
+             : `[kode-emu] could not install ${file.name}: ${j.error}`);
   } catch (err) {
-    log(`[kode-sim] could not upload ${file.name}: ${err}`);
+    log(`[kode-emu] could not upload ${file.name}: ${err}`);
   }
 };
 
@@ -365,12 +365,12 @@ $("pct").oninput = battery;
 $("usb").onchange = battery;
 // The microSD's slot: taking the card out is what kodeOS sees as a card pulled.
 $("sdin").onchange = () => sendJson({ sd: $("sdin").checked });
-// The Mac's microphone: kode-sim turns it on for every page with MIC_START,
+// The Mac's microphone: kode-emu turns it on for every page with MIC_START,
 // at the rate the firmware's receiver runs at. A click is also the gesture
 // the sound needs.
 $("micin").onchange = () => {
   if ($("micin").checked) audioUnlock().catch(() => {});
-  try { localStorage.setItem("kode-sim.mic", $("micin").checked ? "on" : "off"); } catch (_) { /* not kept */ }
+  try { localStorage.setItem("kode-emu.mic", $("micin").checked ? "on" : "off"); } catch (_) { /* not kept */ }
   sendJson({ mic: $("micin").checked });
 };
 
@@ -514,7 +514,7 @@ async function micStart(rate) {
   try {
     await audioUnlock();
     if (gen !== micGen) return;
-    // Echo cancellation on: the Kode Dot hearing its own speaker is kode-sim's
+    // Echo cancellation on: the Kode Dot hearing its own speaker is kode-emu's
     // to model (through the case, on its clock); the Mac's speakers coming back
     // through the Mac's microphone would be a second, louder copy of it.
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -526,10 +526,10 @@ async function micStart(rate) {
     micNode = new AudioWorkletNode(ac, "kode-mic", { numberOfOutputs: 0, processorOptions: { rate: micRate } });
     micNode.port.onmessage = (m) => send(T.PCM_IN, new Uint8Array(m.data));
     src.connect(micNode);
-    log("[kode-sim] the computer's microphone → the Kode Dot's microphone");
+    log("[kode-emu] the computer's microphone → the Kode Dot's microphone");
   } catch (err) {
     if (gen !== micGen) return;
-    log(`[kode-sim] no microphone (${err.name}); the Kode Dot hears only its own speaker and its noise floor`);
+    log(`[kode-emu] no microphone (${err.name}); the Kode Dot hears only its own speaker and its noise floor`);
     micStop();
     sendJson({ mic: false });
   }
@@ -588,7 +588,7 @@ if (window.parent !== window && document.documentElement.classList.contains("emb
     const now = performance.now();
     if (now - told < 10000) return;
     told = now;
-    window.parent.postMessage({ kodeSim: "activity" }, "*");
+    window.parent.postMessage({ kodeEmu: "activity" }, "*");
   };
   for (const ev of ["pointerdown", "keydown"]) window.addEventListener(ev, activity, true);
 }

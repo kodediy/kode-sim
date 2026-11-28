@@ -1,8 +1,8 @@
 """The KD frames, as the tests see them: what crosses the page's WebSocket.
 
 A frame is b"KD", a type byte, a little-endian u32 length and the payload
-(crates/kode-sim/src/proto.rs is the real one). The page never sees
-FB_PACKED: kode-sim unpacks the pixels and hands on FB_RECT.
+(crates/kode-emu/src/proto.rs is the real one). The page never sees
+FB_PACKED: kode-emu unpacks the pixels and hands on FB_RECT.
 """
 
 import re
@@ -38,7 +38,7 @@ USB_OUT = 0x8C
 
 BTN_TOP, BTN_BOT, BTN_LEFT, BTN_RIGHT, BTN_UP, BTN_DOWN = (1 << i for i in range(6))
 
-# What kode-sim review counts as a crash (crates/kode-sim/src/review.rs).
+# What kode-emu review counts as a crash (crates/kode-emu/src/review.rs).
 CRASH = re.compile(r"task_wdt|Guru Meditation|abort\(\)|Firmware abort|assertion|Q_onError|failed assert")
 
 

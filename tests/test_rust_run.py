@@ -1,8 +1,8 @@
-"""`kode-sim run`, from outside: the binary, the fake esp-emu, a page.
+"""`kode-emu run`, from outside: the binary, the fake esp-emu, a page.
 
 The page's WebSocket, the console both ways, the serial port, reset,
 power, the battery, the microSD, the Origin check, --forward, crashes and
-api/install - plus the board's chips, which kode-sim answers in-process.
+api/install - plus the board's chips, which kode-emu answers in-process.
 """
 
 import asyncio
@@ -80,7 +80,7 @@ async def test_new_client_gets_recent_console(sim):
 
 async def test_no_page_frame_reaches_kemu(sim):
     """The page's frames are the board's chips' and its codec's, which
-    kode-sim answers itself: none goes to the firmware over UART1."""
+    kode-emu answers itself: none goes to the firmware over UART1."""
     a = await ws(sim)
     await a.send_bytes(kd.encode(kd.PCM_IN, bytes(64)))
     await a.send_bytes(kd.encode(kd.BUTTONS, b"\x00"))
@@ -136,7 +136,7 @@ async def test_a_foreign_origin_is_refused(sim):
 
 async def test_a_foreign_upload_is_refused_before_its_body_is_read(sim):
     """A site's form posting 16 MB: refused on its headers, not after
-    kode-sim has taken in the whole body."""
+    kode-emu has taken in the whole body."""
     for api in ("install", "mailbox"):
         reader, writer = await asyncio.open_connection("127.0.0.1", sim.port)
         writer.write((f"POST /api/{api} HTTP/1.1\r\nHost: 127.0.0.1:{sim.port}\r\n"
@@ -306,7 +306,7 @@ async def test_the_speaker_reaches_every_page_mono_at_the_dac_s_volume(sim):
 
 
 async def test_the_mac_s_microphone_reaches_the_chip_s_receiver(sim):
-    """A page turns the microphone on; kode-sim asks every page for it at the
+    """A page turns the microphone on; kode-emu asks every page for it at the
     rate the firmware's receiver runs at, and what it hears is fed to the
     receiver, in the left slot, ahead of emulated time."""
     a = await ws(sim)
@@ -533,7 +533,7 @@ async def test_run_exits_nonzero_when_the_firmware_crashes(exe, fake_emu, tmp_pa
 
 
 async def test_without_an_esp_emu_run_says_so(exe, tmp_path, monkeypatch):
-    monkeypatch.setenv("KODE_SIM_ESP_EMU", str(tmp_path / "no-esp-emu"))
+    monkeypatch.setenv("KODE_EMU_ESP_EMU", str(tmp_path / "no-esp-emu"))
     sim = await start(exe, tmp_path, wait=False)
     rc = await asyncio.to_thread(sim.proc.wait, 15)
     assert rc == 1
@@ -541,14 +541,14 @@ async def test_without_an_esp_emu_run_says_so(exe, tmp_path, monkeypatch):
 
 
 async def test_sigterm_stops_the_simulator_and_its_emulator(sim):
-    """Killed with SIGTERM (or SIGHUP, the terminal closing), `kode-sim run`
+    """Killed with SIGTERM (or SIGHUP, the terminal closing), `kode-emu run`
     shuts down as on Ctrl-C: no esp-emu left behind, no note."""
     children = subprocess.run(["pgrep", "-P", str(sim.proc.pid)], capture_output=True, text=True).stdout.split()
     assert children, "no esp-emu started"
     assert sim.stop(signal.SIGTERM) == 0
     time.sleep(0.5)
     alive = [c for c in children if subprocess.run(["kill", "-0", c], capture_output=True).returncode == 0]
-    assert not alive, f"esp-emu {alive} outlived kode-sim"
+    assert not alive, f"esp-emu {alive} outlived kode-emu"
     assert sim.note() is None
 
 
@@ -567,7 +567,7 @@ async def test_sigterm_mid_boot_leaves_no_esp_emu(exe, fake_emu, tmp_path, monke
     alive = [c for c in children if subprocess.run(["kill", "-0", c], capture_output=True).returncode == 0]
     for c in alive:
         os.kill(int(c), signal.SIGKILL)
-    assert not alive, f"esp-emu {alive} outlived kode-sim"
+    assert not alive, f"esp-emu {alive} outlived kode-emu"
 
 
 async def test_sighup_and_sigint_stop_it_too(exe, fake_emu, tmp_path):
@@ -611,14 +611,14 @@ async def test_sigterm_while_a_page_boots_it_leaves_no_esp_emu(exe, fake_emu, tm
         alive = _alive(booting)
         for c in alive:
             os.kill(int(c), signal.SIGKILL)
-        assert not alive, f"esp-emu {alive} outlived kode-sim"
+        assert not alive, f"esp-emu {alive} outlived kode-emu"
         assert "panicked" not in sim.stderr(), sim.stderr()
     finally:
         sim.stop()
 
 
 async def test_sigterm_stops_a_review_and_its_emulator(exe, fake_emu, tmp_path, monkeypatch):
-    """`kode-sim review` stopped half-way (SIGTERM, Ctrl-C, a closed
+    """`kode-emu review` stopped half-way (SIGTERM, Ctrl-C, a closed
     terminal): its esp-emu goes with it."""
     monkeypatch.setenv("FAKE_OUTLIVE_UART", "1")
     kodeos = tmp_path / "kodeos"
@@ -632,7 +632,7 @@ async def test_sigterm_stops_a_review_and_its_emulator(exe, fake_emu, tmp_path, 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         proc = subprocess.Popen([str(exe), "review", str(app), str(scenario), "--out", str(tmp_path / "out"),
                                  "--kodeos", str(kodeos)],
-                                env={**os.environ, "KODE_SIM_CACHE": str(tmp_path / "cache")},
+                                env={**os.environ, "KODE_EMU_CACHE": str(tmp_path / "cache")},
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
             emus = await _a_new_child(proc.pid)
@@ -643,7 +643,7 @@ async def test_sigterm_stops_a_review_and_its_emulator(exe, fake_emu, tmp_path, 
             alive = _alive(emus)
             for c in alive:
                 os.kill(int(c), signal.SIGKILL)
-            assert not alive, f"{sig}: esp-emu {alive} outlived kode-sim review"
+            assert not alive, f"{sig}: esp-emu {alive} outlived kode-emu review"
             assert rc == 128 + sig, (sig, rc)
         finally:
             if proc.poll() is None:
@@ -675,11 +675,11 @@ async def test_esp_emu_runs_as_a_kode_dot(sim, fake_emu, tmp_path):
     sock = args[args.index("--hosted") + 1].removeprefix("bridge:host:")
     assert c5[c5.index("--hosted") + 1] == f"bridge:slave:{sock}"
     assert c5[c5.index("--net") + 1] == "user,net=192.168.4.0/24"
-    assert c5[c5.index("--wifi-ssid") + 1] == "kode-sim"
+    assert c5[c5.index("--wifi-ssid") + 1] == "kode-emu"
 
 
 async def test_forwarded_ports_reach_esp_emu_as_hostfwd(exe, fake_emu, tmp_path):
-    """`kode-sim run --forward 25565 --forward 8080:80`: the Mac's localhost
+    """`kode-emu run --forward 25565 --forward 8080:80`: the Mac's localhost
     ports into the Kode Dot's, through the user-mode network of the C5's
     esp-emu, whose WiFi the Kode Dot is on."""
     sim = await start(exe, tmp_path, "--forward", "25565", "--forward", "8080:80")
@@ -767,11 +767,11 @@ async def test_the_serial_port_carries_binary_whole(sim):
         os.close(fd)
 
 
-# ---- kode-sim install, and the page's upload ------------------------------------------------
+# ---- kode-emu install, and the page's upload ------------------------------------------------
 
 async def test_run_announces_itself_and_install_finds_it(exe, fake_emu, tmp_path):
-    """The note `kode-sim run` leaves while it runs: its page and its serial
-    port, which `kode-sim install` finds and installs over. It goes when
+    """The note `kode-emu run` leaves while it runs: its page and its serial
+    port, which `kode-emu install` finds and installs over. It goes when
     the simulator does."""
     sim = await start(exe, tmp_path)
     try:
@@ -780,7 +780,7 @@ async def test_run_announces_itself_and_install_finds_it(exe, fake_emu, tmp_path
         app = tmp_path / "app.bin"
         app.write_bytes(b"\xe9" + os.urandom(4096 * 3))
         r = await asyncio.to_thread(subprocess.run, [str(exe), "install", str(app)],
-                                    env={**os.environ, "KODE_SIM_CACHE": str(sim.cache)},
+                                    env={**os.environ, "KODE_EMU_CACHE": str(sim.cache)},
                                     capture_output=True, text=True, timeout=60)
         assert r.returncode == 0 and "installed" in r.stderr, r.stderr
     finally:
@@ -798,7 +798,7 @@ async def test_an_app_uploaded_from_the_page_is_installed(sim):
         assert r.status == 200, await r.text()
         assert await r.json() == {"ok": True, "bytes": len(image)}
         await next_json(a, lambda j: str(j.get("console", "")).startswith(
-            f"[kode-sim] installed {len(image)} bytes"))
+            f"[kode-emu] installed {len(image)} bytes"))
         await _console_says(a, "I (629) app_init: Project name:     app")      # kodeOS boots it
         r = await s.post(f"{sim.url}api/install", data=b"not an app")
         assert r.status == 400
@@ -842,7 +842,7 @@ async def test_an_install_whose_page_left_still_holds_off_a_second(exe, fake_emu
                 assert r.status == 409, (api, await r.text())
                 assert "already under way" in (await r.json())["error"]
         await next_json(a, lambda j: str(j.get("console", "")).startswith(
-            f"[kode-sim] installed {len(image)} bytes"), timeout=10)
+            f"[kode-emu] installed {len(image)} bytes"), timeout=10)
         await close(a)
     finally:
         sim.stop()
@@ -865,7 +865,7 @@ async def test_a_mailbox_whose_page_left_is_still_finished_and_cleaned_up(exe, f
         await _console_says(a, "fake: reset", timeout=10)
         await _console_says(a, "!N 4431 kaos.appmgr dev app 'app' v1 adopted from the mailbox")
         await asyncio.sleep(0.2)
-        assert not list(tmp.glob("kode-sim-mailbox-*")), list(tmp.iterdir())
+        assert not list(tmp.glob("kode-emu-mailbox-*")), list(tmp.iterdir())
         await close(a)
     finally:
         sim.stop()
@@ -914,7 +914,7 @@ async def test_the_card_is_in_the_slot_and_the_page_s_switch_restarts_with_it(si
         launches = len(fake_emu.read_text().splitlines())
         await a.send_str(json.dumps({"sd": sd}))
         await next_json(a, lambda j: j.get("sd") is sd)
-        await _console_starts(a, "[kode-sim] the card ", timeout=10)
+        await _console_starts(a, "[kode-emu] the card ", timeout=10)
         for _ in range(100):
             if len(fake_emu.read_text().splitlines()) > launches:
                 break
@@ -967,7 +967,7 @@ async def test_a_card_in_one_simulator_is_not_put_in_another(sim, exe, tmp_path)
 # ---- what the tests of the firmware ask of it ------------------------------------------------
 
 async def test_no_internet_lets_nothing_out_but_dns(exe, fake_emu, tmp_path):
-    """`kode-sim run --no-internet`: a Kode Dot on a network with no way
+    """`kode-emu run --no-internet`: a Kode Dot on a network with no way
     out, as a review's ("network": "none") - its clock has to come from its RTC."""
     sim = await start(exe, tmp_path, "--no-internet", "--forward", "8080:80")
     try:
@@ -995,7 +995,7 @@ async def test_the_page_s_stats_count_the_bytes_that_crossed_uart1(sim):
 
 async def test_run_of_what_is_not_a_project_says_so(exe, tmp_path):
     r = subprocess.run([str(exe), "run", "--no-open", str(tmp_path / "nope")],
-                       env={**os.environ, "KODE_SIM_CACHE": str(tmp_path / "cache")},
+                       env={**os.environ, "KODE_EMU_CACHE": str(tmp_path / "cache")},
                        capture_output=True, text=True, timeout=60)
     assert r.returncode != 0
     assert str(tmp_path / "nope") in r.stderr, r.stderr
@@ -1004,25 +1004,25 @@ async def test_run_of_what_is_not_a_project_says_so(exe, tmp_path):
 # ---- run as sim.start does not: a stdout of its own, a port of its choosing ------------------
 
 async def _run(exe, tmp_path, *args, port=None, stdout=None):
-    """`kode-sim run` on the fake, its stdout @stdout, its page on @port
+    """`kode-emu run` on the fake, its stdout @stdout, its page on @port
     (kd.free_port() by default), up once its note is there."""
     port = kd.free_port() if port is None else port
     argv = [str(exe), "run", "--firmware", str(tmp_path / "m.bin"), "--elf", str(tmp_path / "a.elf"),
             "--port", str(port), "--no-open", "--sd", str(card(tmp_path)), *args]
     out, err = tmp_path / f"out-{port}", tmp_path / f"err-{port}"
-    proc = subprocess.Popen(argv, env={**os.environ, "KODE_SIM_CACHE": str(tmp_path / "cache")},
+    proc = subprocess.Popen(argv, env={**os.environ, "KODE_EMU_CACHE": str(tmp_path / "cache")},
                             stdin=subprocess.DEVNULL, stdout=stdout or out.open("wb"), stderr=err.open("wb"))
     sim = Sim(proc, port, tmp_path / "cache", out, err)
     for _ in range(400):
         if sim.note() is not None or proc.poll() is not None:
             break
         await asyncio.sleep(0.05)
-    assert sim.note() is not None, f"kode-sim run never came up: {sim.stderr()}"
+    assert sim.note() is not None, f"kode-emu run never came up: {sim.stderr()}"
     return sim
 
 
 async def test_a_closed_stdout_does_not_stop_the_console(exe, fake_emu, tmp_path):
-    """The terminal's pipe closed (`kode-sim run | head`): the lines it can
+    """The terminal's pipe closed (`kode-emu run | head`): the lines it can
     no longer print are lost there, and nowhere else."""
     r, w = os.pipe()
     os.close(r)                                          # nobody reads what it prints
@@ -1067,7 +1067,7 @@ os.setsid()                                         # a session of its own, the 
 fd = os.open(os.ttyname(slave), os.O_RDWR)
 os.tcsetpgrp(fd, os.getpgrp())                      # this process's group is the foreground one
 p = subprocess.Popen(argv, stdin=fd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     process_group=0, env=env)      # `kode-sim run &`: a group in the background
+                     process_group=0, env=env)      # `kode-emu run &`: a group in the background
 time.sleep(4)
 stat = subprocess.run(["ps", "-o", "stat=", "-p", str(p.pid)], capture_output=True, text=True).stdout.strip()
 print(stat, flush=True)
@@ -1081,7 +1081,7 @@ except subprocess.TimeoutExpired:
 
 
 async def test_run_in_the_background_of_a_terminal_keeps_running(exe, fake_emu, tmp_path):
-    """`kode-sim run &` from a shell: it reads the terminal (its console),
+    """`kode-emu run &` from a shell: it reads the terminal (its console),
     which a background job may not, and the terminal's SIGTTIN would stop
     it; it keeps serving instead, and reads the terminal once in front."""
     import sys
@@ -1092,7 +1092,7 @@ async def test_run_in_the_background_of_a_terminal_keeps_running(exe, fake_emu, 
     r = await asyncio.to_thread(subprocess.run, [sys.executable, "-c", _BACKGROUND, *argv],
                                 env=env(tmp_path / "cache"), capture_output=True, text=True, timeout=30)
     stat = r.stdout.strip()
-    assert stat and "T" not in stat, f"kode-sim run was stopped in the background (ps: {stat!r}) {r.stderr}"
+    assert stat and "T" not in stat, f"kode-emu run was stopped in the background (ps: {stat!r}) {r.stderr}"
 
 
 async def test_the_page_s_stats_say_how_far_the_emulated_clock_has_got(sim):

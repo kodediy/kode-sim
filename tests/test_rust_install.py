@@ -1,9 +1,9 @@
-"""`kode-sim install`, from outside: the binary, the fake esp-emu and a
-`kode-sim run` to install into - through kodeOS's console, as kcli does,
+"""`kode-emu install`, from outside: the binary, the fake esp-emu and a
+`kode-emu run` to install into - through kodeOS's console, as kcli does,
 and `--mailbox`: the app into app_pending of the flash esp-emu runs, and a
 reset, as an Arduino upload does.
 
-Each test has a cache of its own (KODE_SIM_CACHE), so the notes the
+Each test has a cache of its own (KODE_EMU_CACHE), so the notes the
 simulators leave there are never beside the one you have open.
 """
 
@@ -22,7 +22,7 @@ APP = b"\xe9" + bytes(range(256)) * 40          # an app image, two whole chunks
 
 def install(exe, cache, *args, timeout=60):
     return subprocess.run([str(exe), "install", *[str(a) for a in args]],
-                          env={**os.environ, "KODE_SIM_CACHE": str(cache)},
+                          env={**os.environ, "KODE_EMU_CACHE": str(cache)},
                           capture_output=True, text=True, timeout=timeout)
 
 
@@ -81,7 +81,7 @@ def test_a_note_from_a_dead_simulator_is_not_a_simulator(exe, tmp_path):
     dead = note(tmp_path, 999999, "/dev/null", "http://127.0.0.1:1/")
     r = install(exe, tmp_path, app(tmp_path))
     assert r.returncode == 1
-    assert "no simulator is running" in r.stderr and "kode-sim run" in r.stderr
+    assert "no simulator is running" in r.stderr and "kode-emu run" in r.stderr
     assert not dead.exists(), "the dead simulator's note is cleared"
 
 
@@ -91,14 +91,14 @@ def test_install_with_no_simulator_running_stops_before_building(exe, tmp_path):
     (project / "CMakeLists.txt").write_text("project(proj)\n")
     r = install(exe, tmp_path / "cache", project)
     assert r.returncode == 1
-    assert "kode-sim run" in r.stderr and "building" not in r.stderr
+    assert "kode-emu run" in r.stderr and "building" not in r.stderr
     assert not any((tmp_path / "cache").glob("proj-*")), "built with nowhere to install"
     r = install(exe, tmp_path / "cache", "--port", "9999", project)
     assert r.returncode == 1 and "no simulator is on port 9999" in r.stderr
 
 
 async def test_install_finds_the_newest_of_two_simulators_or_the_one_on_a_port(exe, fake_emu, tmp_path):
-    """Two `kode-sim run` at once: install uses the one started last, --port
+    """Two `kode-emu run` at once: install uses the one started last, --port
     the one whose page is on that port; when the newer stops, its note goes
     and installs go to the other."""
     cache = tmp_path / "cache"
@@ -152,7 +152,7 @@ async def test_mailbox_puts_the_app_in_app_pending_and_resets(exe, sim, tmp_path
     await sim.said("fake: reset")
     await sim.said("adopted from the mailbox")
     await sim.said("Project name:     app")
-    await sim.said("[kode-sim] ")
+    await sim.said("[kode-emu] ")
     lines = sim.printed()
     resets = [i for i, line in enumerate(lines) if line == "fake: reset"]    # the first is the chips' at boot
     assert lines.index(f"fake: write-region 0x1a00000 {len(APP)}") < resets[-1]

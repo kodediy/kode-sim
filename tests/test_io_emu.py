@@ -77,7 +77,7 @@ async def test_a_battery_sent_in_reply_to_hello_is_kept(exe, buttons_led, tmp_pa
 
 
 async def test_the_same_binary_as_the_board_runs_with_the_board_s_chips(exe, kode_sdk, tmp_path):
-    """kode-sim's goal: the image a Kode Dot runs, unchanged - no kemu in it -
+    """kode-emu's goal: the image a Kode Dot runs, unchanged - no kemu in it -
     on esp-emu with the board's chips beside it. The LED starts green, and
     TOP, a P4 pin the chips drive, turns it red."""
     fw = firmware(exe, kode_sdk / "examples" / "buttons_led", sdk=kode_sdk, board=True)

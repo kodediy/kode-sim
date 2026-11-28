@@ -1,6 +1,6 @@
-# Licences of kode-sim
+# Licences of kode-emu
 
-This file says which licence applies to each part of this repository. Read it before you distribute kode-sim, or a firmware that you built with it.
+This file says which licence applies to each part of this repository. Read it before you distribute kode-emu, or a firmware that you built with it.
 
 | Part | Owner | Licence |
 |---|---|---|
@@ -21,11 +21,11 @@ The file `LICENSE` holds the full text of the GNU General Public License, versio
 
 This licence gives no right to use the names Kode, Kode Dot, kodeOS and Kody, or the character Kody, as trademarks. `TRADEMARKS.md` in the repository [`kodediy/.github`](https://github.com/kodediy/.github/blob/main/TRADEMARKS.md) says how you can use them.
 
-## What kode-sim downloads
+## What kode-emu downloads
 
 These are not in this repository, and each has its own licence:
 
-- **esp-emu**, Espressif's emulator. kode-sim installs the pinned version on its first run with Espressif's installer, in its own cache. Its terms are Espressif's ([espressif/esp-emulator](https://github.com/espressif/esp-emulator)).
-- **The C5's firmware**, [kode_slave_c5](https://github.com/kodediy/kode_slave_c5): kode-sim fetches the pinned release from GitHub on its first run and builds it with your ESP-IDF, in its own cache. It is Espressif's esp-hosted slave with Kode's changes, under Apache-2.0 (its `NOTICE.md`).
+- **esp-emu**, Espressif's emulator. kode-emu installs the pinned version on its first run with Espressif's installer, in its own cache. Its terms are Espressif's ([espressif/esp-emulator](https://github.com/espressif/esp-emulator)).
+- **The C5's firmware**, [kode_slave_c5](https://github.com/kodediy/kode_slave_c5): kode-emu fetches the pinned release from GitHub on its first run and builds it with your ESP-IDF, in its own cache. It is Espressif's esp-hosted slave with Kode's changes, under Apache-2.0 (its `NOTICE.md`).
 - **The Rust crates** in `Cargo.lock`, downloaded by `cargo build`. Each one says its licence on crates.io.
-- **The firmware** that kode-sim builds and runs: [kode-sdk](https://github.com/kodediy/kode-sdk), [kodeOS](https://github.com/kodediy/KodeOS) and the apps. Their `NOTICE.md` files say which licence applies to each part. `firmware/kemu/` is linked into that firmware, under GPL-3.0-or-later like the rest of this repository.
+- **The firmware** that kode-emu builds and runs: [kode-sdk](https://github.com/kodediy/kode-sdk), [kodeOS](https://github.com/kodediy/KodeOS) and the apps. Their `NOTICE.md` files say which licence applies to each part. `firmware/kemu/` is linked into that firmware, under GPL-3.0-or-later like the rest of this repository.

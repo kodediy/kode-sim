@@ -22,11 +22,11 @@ const MAX_APP: usize = 16 * 1024 * 1024;
 /// The largest message a page may send (a microphone frame is 8 KB).
 const MAX_MSG: usize = 1 << 20;
 
-/// The page's files: `$KODE_SIM_WEB`, or web/ in the checkout this binary
+/// The page's files: `$KODE_EMU_WEB`, or web/ in the checkout this binary
 /// was built from. Read
 /// from disk on every request, so the page can be edited without a rebuild.
 pub fn web_dir() -> PathBuf {
-    match std::env::var_os("KODE_SIM_WEB") {
+    match std::env::var_os("KODE_EMU_WEB") {
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../web")),
     }
@@ -50,7 +50,7 @@ fn origin(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn forbidden() -> Response {
-    (StatusCode::FORBIDDEN, "kode-sim takes pages from itself only").into_response()
+    (StatusCode::FORBIDDEN, "kode-emu takes pages from itself only").into_response()
 }
 
 async fn ws(State(bridge): State<Arc<Bridge>>, headers: HeaderMap, upgrade: WebSocketUpgrade) -> Response {
@@ -167,7 +167,7 @@ async fn install(State(bridge): State<Arc<Bridge>>, headers: HeaderMap, body: Bo
 }
 
 /// POST an app image: into the mailbox (app_pending), and the chip reset,
-/// as an Arduino upload does - `kode-sim install --mailbox`.
+/// as an Arduino upload does - `kode-emu install --mailbox`.
 async fn mailbox(State(bridge): State<Arc<Bridge>>, headers: HeaderMap, body: Body) -> Response {
     let image = match upload(&bridge, &headers, body).await {
         Ok(i) => i,

@@ -19,7 +19,7 @@ pub const LABEL: &str = "KODEDOT";
 /// Where a card's one partition starts, as SD cards come formatted.
 pub const FIRST_LBA: u64 = 2048;
 
-/// The card `kode-sim run` uses unless told otherwise.
+/// The card `kode-emu run` uses unless told otherwise.
 pub fn default_path() -> PathBuf {
     crate::emu::cache_dir().join("sd").join("card.img")
 }
@@ -136,7 +136,7 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("kode-sim-test-{}-{name}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kode-emu-test-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("card.img")
     }

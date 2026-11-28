@@ -1,7 +1,7 @@
-"""The firmware in esp-emu, driven through kode-sim as a person's page drives it.
+"""The firmware in esp-emu, driven through kode-emu as a person's page drives it.
 
-`firmware()` builds a project with `kode-sim build --json`; `boot()` runs it
-with `kode-sim run --firmware ... --no-open` and connects a page to it. The
+`firmware()` builds a project with `kode-emu build --json`; `boot()` runs it
+with `kode-emu run --firmware ... --no-open` and connects a page to it. The
 page (`Kode`) hears every frame the firmware sends and every console line,
 and sends what the page sends: the board's inputs as KD frames, console
 lines and power as JSON. Raw console bytes go through the serial port, as
@@ -23,18 +23,18 @@ from sim import env, open_serial, serial_write, start
 
 
 def firmware(exe, project: Path, sdk: Path | None = None, board: bool = False) -> dict:
-    """`kode-sim build` of @project: {"merged_bin", "elf", "app_bin"} as Paths.
-    In kode-sim's own cache, so a project is built once for every test."""
+    """`kode-emu build` of @project: {"merged_bin", "elf", "app_bin"} as Paths.
+    In kode-emu's own cache, so a project is built once for every test."""
     argv = [str(exe), "build", "--json", *(["--sdk", str(sdk)] if sdk else []), *(["--board"] if board else []),
             str(project)]
-    e = {k: v for k, v in os.environ.items() if k != "KODE_SIM_CACHE"}
+    e = {k: v for k, v in os.environ.items() if k != "KODE_EMU_CACHE"}
     r = subprocess.run(argv, env=e, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     assert r.returncode == 0, r.stderr[-4000:]
     return {k: Path(v) if v else None for k, v in json.loads(r.stdout.strip().splitlines()[-1]).items()}
 
 
 class Kode:
-    """A `kode-sim run` and a page on it, its WebSocket read as it comes."""
+    """A `kode-emu run` and a page on it, its WebSocket read as it comes."""
 
     def __init__(self, sim, cache):
         self.sim, self.cache = sim, cache
@@ -114,7 +114,7 @@ class Kode:
     def closed(self, waiting_for: str) -> EOFError:
         """What a wait raises when the page's WebSocket closed under it."""
         rc = self.sim.proc.poll()
-        return EOFError(f"the page's WebSocket closed before {waiting_for}; kode-sim run "
+        return EOFError(f"the page's WebSocket closed before {waiting_for}; kode-emu run "
                         f"{'is still running' if rc is None else f'exited with {rc}'}; its stderr ends:\n"
                         f"{self.sim.stderr()[-2000:]}")
 
@@ -131,7 +131,7 @@ class Kode:
 
 
 async def boot(exe, tmp_path, fw: dict, *args, card=None, timeout: float = 60) -> Kode:
-    """`kode-sim run` on @fw with @args, and a page on it. Without --sd its
+    """`kode-emu run` on @fw with @args, and a page on it. Without --sd its
     slot is empty (@card, the image kept out of it, is made once). If it is
     not up in @timeout s it is stopped, and the AssertionError carries it as `.sim`."""
     cache = tmp_path / "cache"
@@ -145,7 +145,7 @@ async def boot(exe, tmp_path, fw: dict, *args, card=None, timeout: float = 60) -
         end = loop.time() + timeout
         await k.connect(timeout)
         while sim.note() is None:                    # up, its serial port open and announced
-            assert sim.proc.poll() is None and loop.time() < end, f"kode-sim run never came up: {sim.stderr()}"
+            assert sim.proc.poll() is None and loop.time() < end, f"kode-emu run never came up: {sim.stderr()}"
             await asyncio.sleep(0.05)
     except BaseException as e:                       # a timeout, or the test cancelled: nothing left running
         if hasattr(k, "_pump"):
@@ -159,7 +159,7 @@ async def boot(exe, tmp_path, fw: dict, *args, card=None, timeout: float = 60) -
 
 
 def install(exe, k: Kode, app: Path, *args) -> subprocess.CompletedProcess:
-    """`kode-sim install` into @k, as a person types it in another terminal."""
+    """`kode-emu install` into @k, as a person types it in another terminal."""
     return subprocess.run([str(exe), "install", *args, str(app)], env=env(k.cache),
                           capture_output=True, text=True, timeout=120)
 
@@ -227,7 +227,7 @@ async def clock_runs(k: Kode, timeout: float = 10) -> bool:
 async def console_ready(k: Kode, timeout: float = 60, every: float = 1.0) -> None:
     """Until the firmware's console takes commands: `ping`, asked again
     every @every s, answered with >ok (kaos's console, kodeOS's and an
-    app's, as `kode-sim install` asks before it sends anything). Only what
+    app's, as `kode-emu install` asks before it sends anything). Only what
     comes after a question counts. TimeoutError if it never answers."""
     answer: list[str] = []
     listen = answer.append

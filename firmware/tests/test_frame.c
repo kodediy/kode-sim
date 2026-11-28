@@ -139,7 +139,7 @@ static void wrapping_length_is_corruption(void)
     CHECK(got_n == 1 && got_type[0] == KEMU_T_LED);
 }
 
-/* The vectors kode-sim's own tests unpack too (crates/kode-sim/src/proto.rs). */
+/* The vectors kode-emu's own tests unpack too (crates/kode-emu/src/proto.rs). */
 static void pack16_runs_and_literals(void)
 {
     const uint16_t px[] = {5, 5, 5, 1, 2, 3, 3};

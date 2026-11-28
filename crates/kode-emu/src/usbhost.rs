@@ -158,7 +158,7 @@ fn clean_name(n: &str) -> String {
     let n: String = n.chars().filter(|c| !c.is_control() && !"/\\:*?\"<>|".contains(*c)).collect();
     let n = n.trim().trim_matches('.').to_string();
     if n.is_empty() {
-        "kode-sim.bin".into()
+        "kode-emu.bin".into()
     } else {
         n.chars().take(100).collect()
     }
@@ -177,7 +177,7 @@ enum Ev {
     Rebooted,
 }
 
-/// Where the computer's frames go: the firmware's UART1, in kode-sim.
+/// Where the computer's frames go: the firmware's UART1, in kode-emu.
 pub type Wire = Arc<dyn Fn(u8, &[u8]) + Send + Sync>;
 /// Where its snapshots go: every page, and the late ones.
 pub type Emit = Arc<dyn Fn(Value) + Send + Sync>;
@@ -3090,7 +3090,7 @@ mod tests {
     fn file_names_are_one_name_in_the_root() {
         assert_eq!(clean_name("../../etc/passwd"), "etcpasswd");
         assert_eq!(clean_name("a:b*c?.txt"), "abc.txt");
-        assert_eq!(clean_name("..."), "kode-sim.bin");
+        assert_eq!(clean_name("..."), "kode-emu.bin");
         assert_eq!(clean_name("Foto de Víctor.png"), "Foto de Víctor.png");
     }
 

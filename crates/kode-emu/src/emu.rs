@@ -28,9 +28,9 @@ use tokio::sync::{mpsc, watch};
 use crate::chips;
 use crate::proto;
 
-/// The esp-emu kode-sim runs: the first with MIPI-DSI, SDMMC and a C5 as
+/// The esp-emu kode-emu runs: the first with MIPI-DSI, SDMMC and a C5 as
 /// the ESP-Hosted slave. Kept in
-/// kode-sim's tools folder, so an esp-emu on PATH (another version,
+/// kode-emu's tools folder, so an esp-emu on PATH (another version,
 /// someone else's) is left be.
 pub const ESP_EMU_VERSION: &str = "1.3.0";
 const INSTALLER: &str = "https://raw.githubusercontent.com/espressif/esp-emulator/main/install.sh";
@@ -45,32 +45,46 @@ const C5_WAIT: Duration = Duration::from_secs(10);
 /// The P4's pin on the C5's EN (CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE).
 const PIN_C5_RESET: &str = "23";
 
-/// kode-sim's cache: built firmware, its own esp-emu, the card, the notes.
-/// `$KODE_SIM_CACHE`, or the user's cache ([`user_cache`]).
+/// kode-emu's cache: built firmware, its own esp-emu, the card, the notes.
+/// `$KODE_EMU_CACHE`, or the user's cache ([`user_cache`]).
 pub fn cache_dir() -> PathBuf {
-    match std::env::var_os("KODE_SIM_CACHE") {
+    match std::env::var_os("KODE_EMU_CACHE") {
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => user_cache(&home()),
     }
 }
 
-/// kode-sim's folder in the user's caches: ~/Library/Caches/kode-sim on the
-/// Mac, $XDG_CACHE_HOME/kode-sim (or ~/.cache/kode-sim) elsewhere.
+/// kode-emu's folder in the user's caches: ~/Library/Caches/kode-emu on the
+/// Mac, $XDG_CACHE_HOME/kode-emu (or ~/.cache/kode-emu) elsewhere.
 fn user_cache(home: &std::path::Path) -> PathBuf {
-    if cfg!(target_os = "macos") {
-        return home.join("Library").join("Caches").join("kode-sim");
-    }
-    match std::env::var_os("XDG_CACHE_HOME").filter(|p| !p.is_empty()) {
-        Some(x) => PathBuf::from(x).join("kode-sim"),
-        None => home.join(".cache").join("kode-sim"),
-    }
+    let dir = if cfg!(target_os = "macos") {
+        home.join("Library").join("Caches").join("kode-emu")
+    } else {
+        match std::env::var_os("XDG_CACHE_HOME").filter(|p| !p.is_empty()) {
+            Some(x) => PathBuf::from(x).join("kode-emu"),
+            None => home.join(".cache").join("kode-emu"),
+        }
+    };
+    adopt_old_cache(dir)
 }
 
-/// Where kode-sim keeps the tools it installs (its pinned esp-emu):
-/// `$KODE_SIM_TOOLS`, or the user's cache - not `$KODE_SIM_CACHE`, which
+/// `dir`, taking over the cache kode-emu had when it was kode-sim (its
+/// esp-emu, the C5's firmware, builds and the card) the first time: a
+/// `kode-sim` folder beside it is moved there, if there is no `dir` yet.
+fn adopt_old_cache(dir: PathBuf) -> PathBuf {
+    if let Some(old) = dir.parent().map(|p| p.join("kode-sim")) {
+        if !dir.exists() && old.is_dir() {
+            let _ = std::fs::rename(&old, &dir);
+        }
+    }
+    dir
+}
+
+/// Where kode-emu keeps the tools it installs (its pinned esp-emu):
+/// `$KODE_EMU_TOOLS`, or the user's cache - not `$KODE_EMU_CACHE`, which
 /// a test points at a scratch folder and would install esp-emu again into.
 pub fn tools_dir() -> PathBuf {
-    tools_dir_in(std::env::var_os("KODE_SIM_TOOLS"), &home())
+    tools_dir_in(std::env::var_os("KODE_EMU_TOOLS"), &home())
 }
 
 fn tools_dir_in(tools: Option<std::ffi::OsString>, home: &std::path::Path) -> PathBuf {
@@ -90,10 +104,10 @@ pub fn which(exe: &str) -> bool {
 }
 
 /// esp-emu at [`ESP_EMU_VERSION`], installed with Espressif's own installer
-/// the first time, into [`tools_dir`]. `$KODE_SIM_ESP_EMU` names another
+/// the first time, into [`tools_dir`]. `$KODE_EMU_ESP_EMU` names another
 /// executable to run instead (the tests use it for a stand-in).
 pub fn ensure_esp_emu() -> Result<PathBuf, String> {
-    if let Some(p) = std::env::var_os("KODE_SIM_ESP_EMU").filter(|p| !p.is_empty()) {
+    if let Some(p) = std::env::var_os("KODE_EMU_ESP_EMU").filter(|p| !p.is_empty()) {
         return Ok(PathBuf::from(p));
     }
     let dir = tools_dir().join(format!("esp-emu-{ESP_EMU_VERSION}"));
@@ -693,6 +707,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_cache_kode_sim_made_is_taken_over_once() {
+        let caches = std::env::temp_dir().join(format!("kode-emu-test-{}-adopt", std::process::id()));
+        let _ = std::fs::remove_dir_all(&caches);
+        std::fs::create_dir_all(caches.join("kode-sim").join("esp-emu-1.3.0")).unwrap();
+        std::fs::write(caches.join("kode-sim").join("esp-emu-1.3.0").join("esp-emu"), b"x").unwrap();
+        let new = adopt_old_cache(caches.join("kode-emu"));
+        assert_eq!(new, caches.join("kode-emu"));
+        assert!(new.join("esp-emu-1.3.0").join("esp-emu").is_file(), "the old cache moved over");
+        assert!(!caches.join("kode-sim").exists());
+        // Once there is a kode-emu cache, an old one is left alone.
+        std::fs::create_dir_all(caches.join("kode-sim")).unwrap();
+        adopt_old_cache(caches.join("kode-emu"));
+        assert!(caches.join("kode-sim").exists());
+        let _ = std::fs::remove_dir_all(&caches);
+    }
+
     /// A control port that answers every command with `answer`.
     async fn answering(answer: &'static str) -> String {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -716,8 +747,8 @@ mod tests {
         let home = std::path::Path::new("/h");
         assert_eq!(tools_dir_in(Some("/t".into()), home), PathBuf::from("/t"));
         if cfg!(target_os = "macos") {
-            assert_eq!(tools_dir_in(None, home), PathBuf::from("/h/Library/Caches/kode-sim"));
-            assert_eq!(tools_dir_in(Some("".into()), home), PathBuf::from("/h/Library/Caches/kode-sim"));
+            assert_eq!(tools_dir_in(None, home), PathBuf::from("/h/Library/Caches/kode-emu"));
+            assert_eq!(tools_dir_in(Some("".into()), home), PathBuf::from("/h/Library/Caches/kode-emu"));
         }
     }
 

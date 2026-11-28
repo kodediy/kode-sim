@@ -7,7 +7,7 @@
  * callbacks. Under esp-emu the OTG controller is absent, so TinyUSB's device
  * controller driver (dcd_*) is what kemu replaces, with the model in
  * models/usbdcd.c: the stack, its descriptors, its classes and the app above
- * run unchanged, and the "bus" is the page. The page's computer (kode-sim's
+ * run unchanged, and the "bus" is the page. The page's computer (kode-emu's
  * usbhost.rs) enumerates the device, mounts its disk, reads its keyboard.
  *
  * usb_new_phy() and usb_del_phy() answer at once: there is no PHY to route,

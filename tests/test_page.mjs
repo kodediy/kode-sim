@@ -203,12 +203,12 @@ test("a started microphone sends PCM_IN until it is stopped", async () => {
   assert.equal(node.live, false);
 });
 
-test("the microphone switch asks kode-sim, which turns it on for every page", async () => {
+test("the microphone switch asks kode-emu, which turns it on for every page", async () => {
   const p = page(); p.open();
   p.els.micin.checked = true;
   p.els.micin.onchange();
   assert.deepEqual(p.ws.sent.filter((d) => typeof d === "string").map(JSON.parse), [{ mic: true }]);
-  assert.equal(p.media.length, 0, "the microphone opens on kode-sim's MIC_START, not before");
+  assert.equal(p.media.length, 0, "the microphone opens on kode-emu's MIC_START, not before");
 });
 
 test("MIC_START ticks the switch and MIC_STOP unticks it", async () => {
@@ -235,7 +235,7 @@ test("a microphone the Mac refuses turns the switch off for every page", async (
 test("an embedded page tells its parent of the first use at once, then at most every 10 s", () => {
   const p = page({ embed: true });           // a page loaded a second ago
   p.fire("pointerdown");
-  assert.equal(JSON.stringify(p.posted), JSON.stringify([{ kodeSim: "activity" }]), "the first press, right after loading");
+  assert.equal(JSON.stringify(p.posted), JSON.stringify([{ kodeEmu: "activity" }]), "the first press, right after loading");
   p.tick(5000);
   p.fire("keydown");
   assert.equal(p.posted.length, 1, "5 s later: not again yet");
@@ -454,16 +454,16 @@ test("the settings start closed, and the button opens and closes them", () => {
 test("on connecting, the page asks for the Mac's microphone unless it was turned off", () => {
   const p = page(); const ws = p.open(); ws.onopen();
   assert.ok(ws.sent.includes(JSON.stringify({ mic: true })), ws.sent);
-  const q = page({ stored: { "kode-sim.mic": "off" } }); const w2 = q.open(); w2.onopen();
+  const q = page({ stored: { "kode-emu.mic": "off" } }); const w2 = q.open(); w2.onopen();
   assert.ok(!w2.sent.some((d) => typeof d === "string" && d.includes('"mic":true')), w2.sent);
 });
 
 test("turning the microphone off is remembered", () => {
   const p = page(); p.open();
   p.els.micin.checked = false; p.els.micin.onchange();
-  assert.equal(p.store.get("kode-sim.mic"), "off");
+  assert.equal(p.store.get("kode-emu.mic"), "off");
   p.els.micin.checked = true; p.els.micin.onchange();
-  assert.equal(p.store.get("kode-sim.mic"), "on");
+  assert.equal(p.store.get("kode-emu.mic"), "on");
 });
 
 // ---- How fast it runs ----------------------------------------------------------

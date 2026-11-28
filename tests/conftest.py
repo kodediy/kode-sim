@@ -37,16 +37,16 @@ def _cargo() -> str:
     for c in (shutil.which("cargo"), "/opt/homebrew/opt/rustup/bin/cargo", Path.home() / ".cargo" / "bin" / "cargo"):
         if c and Path(c).exists():
             return str(c)
-    pytest.skip("no cargo to build kode-sim with")
+    pytest.skip("no cargo to build kode-emu with")
 
 
 @pytest.fixture(scope="session")
 def exe() -> Path:
-    """The Rust kode-sim, built now if its sources moved on."""
+    """The Rust kode-emu, built now if its sources moved on."""
     from sim import EXE
     cargo = _cargo()
     env = {**os.environ, "PATH": f"{Path(cargo).parent}{os.pathsep}{os.environ.get('PATH', '')}"}   # its rustc
-    subprocess.run([cargo, "build", "--release", "-q", "-p", "kode-sim"], cwd=ROOT, env=env, check=True)
+    subprocess.run([cargo, "build", "--release", "-q", "-p", "kode-emu"], cwd=ROOT, env=env, check=True)
     return EXE
 
 
@@ -58,20 +58,20 @@ def fake_emu(tmp_path, monkeypatch):
     exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{HERE / "fake_esp_emu.py"}" "$@"\n')
     exe.chmod(0o755)
     log = tmp_path / "launches"
-    monkeypatch.setenv("KODE_SIM_ESP_EMU", str(exe))
+    monkeypatch.setenv("KODE_EMU_ESP_EMU", str(exe))
     monkeypatch.setenv("FAKE_LAUNCH_LOG", str(log))
     # The C5's image: the fake boots anything, so two empty files will do.
     c5 = tmp_path / "c5"
     c5.mkdir()
     for f in ("merged-binary.bin", "kode_c5.elf"):
         (c5 / f).write_bytes(b"")
-    monkeypatch.setenv("KODE_SIM_C5", str(c5))
+    monkeypatch.setenv("KODE_EMU_C5", str(c5))
     return log
 
 
 @pytest.fixture
 async def sim(exe, fake_emu, tmp_path):
-    """`kode-sim run` on the fake esp-emu, with a blank 8 MB card. Its
+    """`kode-emu run` on the fake esp-emu, with a blank 8 MB card. Its
     teardown fails if it went away before the test ended, or did not end
     with 0 on SIGTERM (Sim.stop_clean)."""
     from sim import start

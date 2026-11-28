@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// The browsers tried, in order, when `$KODE_SIM_BROWSER` names none.
+/// The browsers tried, in order, when `$KODE_EMU_BROWSER` names none.
 fn candidates() -> Vec<PathBuf> {
     if cfg!(target_os = "macos") {
         let apps = ["Google Chrome", "Microsoft Edge", "Chromium", "Brave Browser"];
@@ -30,10 +30,10 @@ fn candidates() -> Vec<PathBuf> {
     }
 }
 
-/// The browser that opens the window: `$KODE_SIM_BROWSER`, or the first
+/// The browser that opens the window: `$KODE_EMU_BROWSER`, or the first
 /// Chromium found.
 pub fn browser() -> Option<PathBuf> {
-    match std::env::var_os("KODE_SIM_BROWSER") {
+    match std::env::var_os("KODE_EMU_BROWSER") {
         Some(b) if !b.is_empty() => Some(PathBuf::from(b)),
         _ => candidates().into_iter().find(|c| c.is_file()),
     }
@@ -53,7 +53,7 @@ pub fn app_args(url: &str, profile: &Path) -> Vec<String> {
 }
 
 /// Open the window; the browser's process when there is one to wait on
-/// (dropped, it closes the window: kode-sim stopped takes its window along),
+/// (dropped, it closes the window: kode-emu stopped takes its window along),
 /// None when the page went to the default browser (or nowhere).
 pub fn open(url: &str) -> Option<tokio::process::Child> {
     if let Some(b) = browser() {
@@ -67,7 +67,7 @@ pub fn open(url: &str) -> Option<tokio::process::Child> {
             .spawn();
         match spawned {
             Ok(child) => return Some(child),
-            Err(e) => eprintln!("kode-sim: could not start {}: {e}; opening the page as a tab", b.display()),
+            Err(e) => eprintln!("kode-emu: could not start {}: {e}; opening the page as a tab", b.display()),
         }
     }
     let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };

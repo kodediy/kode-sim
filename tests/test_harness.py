@@ -1,5 +1,5 @@
 """The harness itself (sim.py, emu_helpers.py): what a test that waits on a
-page, or on `kode-sim run` coming up, sees when the other end goes away."""
+page, or on `kode-emu run` coming up, sees when the other end goes away."""
 
 import asyncio
 import json
@@ -15,7 +15,7 @@ from sim import next_frame, next_json, start
 
 
 async def _closing_page():
-    """A /ws that says one line and closes, as a kode-sim that died would."""
+    """A /ws that says one line and closes, as a kode-emu that died would."""
     async def handler(request):
         w = web.WebSocketResponse()
         await w.prepare(request)
@@ -183,23 +183,23 @@ async def test_fake_startup_opens_control_and_chips_before_announcing_uart():
 # ---- which esp-emu --------------------------------------------------------------
 
 def test_the_environment_names_an_esp_emu_only_when_the_person_did(tmp_path, monkeypatch):
-    monkeypatch.delenv("KODE_SIM_ESP_EMU", raising=False)
-    assert "KODE_SIM_ESP_EMU" not in simmod.env(tmp_path / "cache")
-    monkeypatch.setenv("KODE_SIM_ESP_EMU", "/theirs/esp-emu")
-    assert simmod.env(tmp_path / "cache2")["KODE_SIM_ESP_EMU"] == "/theirs/esp-emu"
+    monkeypatch.delenv("KODE_EMU_ESP_EMU", raising=False)
+    assert "KODE_EMU_ESP_EMU" not in simmod.env(tmp_path / "cache")
+    monkeypatch.setenv("KODE_EMU_ESP_EMU", "/theirs/esp-emu")
+    assert simmod.env(tmp_path / "cache2")["KODE_EMU_ESP_EMU"] == "/theirs/esp-emu"
 
 
-async def test_the_esp_emu_run_is_the_one_kode_sim_keeps_in_the_person_s_cache(exe, fake_emu, tmp_path, monkeypatch):
-    """No KODE_SIM_ESP_EMU: the simulator, in a cache of its own, runs the
+async def test_the_esp_emu_run_is_the_one_kode_emu_keeps_in_the_person_s_cache(exe, fake_emu, tmp_path, monkeypatch):
+    """No KODE_EMU_ESP_EMU: the simulator, in a cache of its own, runs the
     pinned esp-emu kept in the person's cache (here the fake, put there)."""
     import os
     import shutil
-    fake = os.environ["KODE_SIM_ESP_EMU"]
-    monkeypatch.delenv("KODE_SIM_ESP_EMU")
+    fake = os.environ["KODE_EMU_ESP_EMU"]
+    monkeypatch.delenv("KODE_EMU_ESP_EMU")
     person = tmp_path / "person"
-    monkeypatch.setenv("KODE_SIM_TOOLS", str(person))
+    monkeypatch.setenv("KODE_EMU_TOOLS", str(person))
     version = re.search(r'pub const ESP_EMU_VERSION: &str = "([^"]+)"',
-                        (simmod.ROOT / "crates" / "kode-sim" / "src" / "emu.rs").read_text())[1]
+                        (simmod.ROOT / "crates" / "kode-emu" / "src" / "emu.rs").read_text())[1]
     pinned = person / f"esp-emu-{version}" / "esp-emu"
     pinned.parent.mkdir(parents=True)
     shutil.copy(fake, pinned)

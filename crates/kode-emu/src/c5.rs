@@ -4,7 +4,7 @@
 //! link (`--hosted`), so the firmware's real esp-hosted path - the link, the
 //! scans, the joins, the vault, BLE - runs as on the board.
 //!
-//! The image is built from source, once, at the release kode-sim pins: esp-emu
+//! The image is built from source, once, at the release kode-emu pins: esp-emu
 //! needs its ELF to find the Wi-Fi blob's entry points, which the
 //! c5_slave.bin a KodeOS release carries comes without.
 
@@ -18,7 +18,7 @@ const C5_REPO: &str = "https://github.com/kodediy/kode_slave_c5.git";
 
 /// The network the C5 sees: esp-emu's soft AP, open, behind the Mac's
 /// connection.
-pub const SSID: &str = "kode-sim";
+pub const SSID: &str = "kode-emu";
 
 /// A built C5 image: the flash esp-emu boots and the ELF beside it.
 #[derive(Clone, Debug)]
@@ -31,15 +31,15 @@ fn image_in(dir: &Path) -> C5Image {
     C5Image { flash: dir.join("merged-binary.bin"), elf: dir.join("kode_c5.elf") }
 }
 
-/// The C5's image: `$KODE_SIM_C5` (a folder with merged-binary.bin and
+/// The C5's image: `$KODE_EMU_C5` (a folder with merged-binary.bin and
 /// kode_c5.elf), or kode_slave_c5 at [`C5_VERSION`], built into the tools
 /// folder the first time.
 pub fn ensure() -> Result<C5Image, BuildError> {
-    if let Some(dir) = std::env::var_os("KODE_SIM_C5").filter(|p| !p.is_empty()) {
+    if let Some(dir) = std::env::var_os("KODE_EMU_C5").filter(|p| !p.is_empty()) {
         let img = image_in(Path::new(&dir));
         if !img.flash.is_file() || !img.elf.is_file() {
             return Err(BuildError(format!(
-                "$KODE_SIM_C5 is {}, which has no merged-binary.bin and kode_c5.elf",
+                "$KODE_EMU_C5 is {}, which has no merged-binary.bin and kode_c5.elf",
                 Path::new(&dir).display()
             )));
         }
@@ -61,7 +61,7 @@ pub fn ensure() -> Result<C5Image, BuildError> {
     if img.flash.is_file() && img.elf.is_file() {
         return Ok(img);
     }
-    eprintln!("kode-sim: building the C5's firmware (kode_slave_c5 {C5_VERSION}), once ...");
+    eprintln!("kode-emu: building the C5's firmware (kode_slave_c5 {C5_VERSION}), once ...");
     let src = dir.join("src");
     if !src.join("CMakeLists.txt").is_file() {
         let _ = std::fs::remove_dir_all(&src);

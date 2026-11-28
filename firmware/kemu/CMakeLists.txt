@@ -3,7 +3,7 @@
 # driver, with the page as the host), the console on UART1 and the RTC's
 # time. The board's I2C chips and pins, the sound (I2S), the panel
 # (MIPI-DSI), the microSD (SDMMC) and the C5 (ESP-Hosted over SDIO) are
-# esp-emu's since 1.1.0, answered by kode-sim. Each piece here goes when
+# esp-emu's since 1.1.0, answered by kode-emu. Each piece here goes when
 # esp-emu models it.
 #
 # WHOLE_ARCHIVE because nothing in the firmware calls into kemu by name: it

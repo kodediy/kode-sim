@@ -3,9 +3,11 @@
  * A kodeOS app that wants WiFi, for kode-sim's tests: it asks the radio the
  * way an app does, logs every answer, and once it has an address serves a
  * TCP echo on ECHO_PORT - what a server app (KodeCraft's 25565) does. Once
- * the radio has settled, up or failed, it asks about the microSD, as an app
- * that keeps its files on the card does: on the board AO_Radio has had the
- * card mounted by then. With the network up it says what TOP's pad is - a
+ * the radio has settled, up or failed, it mounts the microSD and asks about
+ * it, as an app that keeps its files on the card does: since kode-sdk's
+ * #313 an app's card is mounted when it is first used, and the card and the
+ * C5's link share the SDMMC controller on two slots, so the card mounts
+ * with the link up. With the network up it says what TOP's pad is - a
  * GPIO, an input, or something the network took - and it logs every button
  * edge, so that a test can see the buttons still work with the network up.
  */
@@ -55,6 +57,8 @@ static QState Radio_listening(QActive * const me, QEvt const * const e)
             RadioStateEvt const * const r = (RadioStateEvt const *)e;
             KLOG_I(TAG, "radio link=%u", (unsigned)r->link);
             if ((r->link == (uint8_t)KRADIO_UP) || (r->link == (uint8_t)KRADIO_FAILED)) {
+                /* Posted in order to AO_Storage: the mount runs first. */
+                storage_request(KDRV_MEDIUM_SD, STORAGE_OP_MOUNT);
                 storage_request(KDRV_MEDIUM_SD, STORAGE_OP_INFO);
             }
             return Q_HANDLED();

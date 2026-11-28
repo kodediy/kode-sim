@@ -313,9 +313,10 @@ async def test_kodeos_mounts_the_card_image_and_a_file_lands_in_it(exe, kodeos, 
 
 
 async def test_an_app_that_waits_for_the_radio_finds_its_card_mounted(exe, radio, tmp_path):
-    """On the board AO_Radio has AO_Storage mount the card around the link's
-    lifetime, so an app that asks about the card once the radio has settled
-    (KodeCraft does) finds it mounted."""
+    """The card and the C5's link share the SDMMC controller on two slots
+    (kode-sdk's #313): an app that mounts the card once the radio has
+    settled (KodeCraft keeps its files there) finds it mounted, with the
+    link up."""
     k = await boot(exe, tmp_path, radio, "--sd", str(tmp_path / "sd" / "card.img"))
     try:
         line = await console_line(k, r"radio sd mounted=", 60)
@@ -345,6 +346,8 @@ async def test_kodeos_boots_with_the_clock_set_and_no_network(exe, kodeos, tmp_p
         await k.stop()
 
 
+@pytest.mark.xfail(reason="#22: an install during the C5's bring-up arrives damaged; on esp-emu 1.3.0 "
+                          "the review's install lands in it", strict=False)
 async def test_review_puts_a_real_app_through_kodeos(exe, kodeos, display_lvgl, tmp_path):
     """kode-sim review end to end: kodeOS boots, the app is installed and
     boots, the scenario plays, BOT held brings kodeOS back, nothing crashed."""

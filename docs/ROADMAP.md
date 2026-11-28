@@ -12,7 +12,7 @@ pack boots in kode-sim with its screen, its microSD, and its C5's WiFi and
 BLE. What kemu still adds to a build for the simulator is the USB port's
 computer, the console over UART1 and the RTC's time.
 
-## Where each part stands (on esp-emu 1.2.0)
+## Where each part stands (on esp-emu 1.3.0)
 
 | Part of the Kode Dot | Today | Waits for |
 |---|---|---|
@@ -34,8 +34,9 @@ computer, the console over UART1 and the RTC's time.
 
 - **0.3.0 - the board's own binaries.** The screen, the microSD and the C5
   leave kemu on esp-emu 1.1.0.
-- **0.3.1 - esp-emu 1.2.0** (this release), the window in English and its
-  speed readout.
+- **0.3.1 - esp-emu 1.2.0**, the window in English and its speed readout.
+- **0.3.2 - esp-emu 1.3.0** (this release): no stall at the boot, and
+  faster.
 - **1.0.0 - no kemu.** When esp-emu has a USB host on a socket, the USB
   port's computer leaves kemu, and the console and the clock with it.
   `--board` is the only build.
@@ -47,8 +48,7 @@ Alongside these, whenever they are ready:
 - **Speed.** Each esp-emu runs on one core: about real time on an Apple
   M-series Mac, a third of it on a small x86 server - [esp-emulator#53](https://github.com/espressif/esp-emulator/issues/53).
   The C5 runs in its own process, on a core of its own.
-  While the P4 talks to the C5, the P4's clock nearly stops with both
-  esp-emu idle, which is what holds kodeOS's boot for a few seconds -
-  [esp-emulator#70](https://github.com/espressif/esp-emulator/issues/70).
+  The stall while the P4 talked to the C5 is gone in esp-emu 1.3.0
+  ([esp-emulator#70](https://github.com/espressif/esp-emulator/issues/70)).
 - **`--cosim-wait N`** (to propose to Espressif): hold the chip in reset
   until N devices have registered, which saves the double boot at start.

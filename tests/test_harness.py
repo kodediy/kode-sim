@@ -127,6 +127,59 @@ async def test_a_boot_that_never_comes_up_is_killed(tmp_path):
     assert s.proc.poll() is not None
 
 
+async def test_fake_startup_opens_control_and_chips_before_announcing_uart():
+    import socket
+    import sys
+    from contextlib import ExitStack, suppress
+    from pathlib import Path
+
+    with ExitStack() as reservations:
+        ports = {}
+        for name in ("uart1", "control", "cosim"):
+            listener = reservations.enter_context(socket.socket())
+            listener.bind(("127.0.0.1", 0))
+            ports[name] = listener.getsockname()[1]
+    arguments = [part for name, port in ports.items() for part in (f"--{name}-tcp", f"127.0.0.1:{port}")]
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, str(Path(__file__).with_name("fake_esp_emu.py")), "--chip", "esp32p4",
+        *arguments, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    writers = []
+    try:
+        async with asyncio.timeout(5):
+            announcement = await process.stdout.readline()
+            assert announcement == b"fake: up\n", announcement.decode()
+            _, chips = await asyncio.open_connection("127.0.0.1", ports["cosim"])
+            writers.append(chips)
+            reader, control = await asyncio.open_connection("127.0.0.1", ports["control"])
+            writers.append(control)
+            control.write(b"ping\n")
+            await control.drain()
+            assert await reader.readline() == b"ok\n"
+
+            reader, uart = await asyncio.open_connection("127.0.0.1", ports["uart1"])
+            writers.append(uart)
+            decoder, frames = kd.Decoder(), []
+            while len(frames) < 2:
+                chunk = await reader.read(65536)
+                assert chunk, "UART closed before its initial frames"
+                frames.extend(decoder.feed(chunk))
+            assert [kind for kind, _ in frames] == [kd.HELLO, kd.FB_RECT]
+
+            for writer in reversed(writers):
+                writer.close()
+                await writer.wait_closed()
+            output, _ = await process.communicate()
+            assert process.returncode == 0, output.decode()
+    finally:
+        for writer in writers:
+            writer.close()
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
+
+
 # ---- which esp-emu --------------------------------------------------------------
 
 def test_the_environment_names_an_esp_emu_only_when_the_person_did(tmp_path, monkeypatch):

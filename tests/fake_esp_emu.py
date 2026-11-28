@@ -85,15 +85,6 @@ async def main() -> int:
             conn.set_result((reader, writer))
 
     await asyncio.sleep(float(os.environ.get("FAKE_SLOW_START", "0")))   # a slow boot
-    server = await asyncio.start_server(on_client, host, int(port))
-    print("fake: up", flush=True)
-    if os.environ.get("FAKE_CRASH_AFTER"):
-        async def crash_later():
-            await asyncio.sleep(float(os.environ["FAKE_CRASH_AFTER"]))
-            print("Guru Meditation Error: Core 0 panic'ed", flush=True)
-            os._exit(1)
-        asyncio.create_task(crash_later())
-    reader, writer = await conn
 
     mode = ["kodeos"]
     app_name = os.environ.get("FAKE_APP_NAME", "app")
@@ -144,18 +135,10 @@ async def main() -> int:
         print(f"I (629) app_init: Project name:     {mode[0]}", flush=True)
         if os.environ.get("FAKE_BOARD_IMAGE"):
             return                      # no kemu: no HELLO, nothing on UART1
-        writer.write(kd.encode(kd.HELLO, struct.pack("<HHH", 1, 410, 502)))
-        writer.write(kd.encode(kd.FB_RECT, struct.pack("<HHHH", 0, 0, 2, 2) + b"\xff\xff" * 4))
-        await writer.drain()
-
-    await boot()
-
-    if os.environ.get("FAKE_BOARD_IMAGE"):
-        async def board_console():
-            # A board image's console is its USB-Serial/JTAG: esp-emu's stdin.
-            while line := await asyncio.to_thread(sys.stdin.readline):
-                print(f"stdin: {line.rstrip()}", flush=True)
-        asyncio.get_running_loop().create_task(board_console())
+        _, boot_writer = await conn
+        boot_writer.write(kd.encode(kd.HELLO, struct.pack("<HHH", 1, 410, 502)))
+        boot_writer.write(kd.encode(kd.FB_RECT, struct.pack("<HHHH", 0, 0, 2, 2) + b"\xff\xff" * 4))
+        await boot_writer.drain()
 
     if "--control-tcp" in args:
         chost, cport = args[args.index("--control-tcp") + 1].rsplit(":", 1)
@@ -328,6 +311,26 @@ async def main() -> int:
     if "--cosim-tcp" in args:
         khost, kport = args[args.index("--cosim-tcp") + 1].rsplit(":", 1)
         await asyncio.start_server(serve_chips, khost, int(kport))
+
+    # The simulator uses UART availability as its startup boundary.
+    # The control and chip listeners must be ready by then.
+    server = await asyncio.start_server(on_client, host, int(port))
+    print("fake: up", flush=True)
+    if os.environ.get("FAKE_CRASH_AFTER"):
+        async def crash_later():
+            await asyncio.sleep(float(os.environ["FAKE_CRASH_AFTER"]))
+            print("Guru Meditation Error: Core 0 panic'ed", flush=True)
+            os._exit(1)
+        asyncio.create_task(crash_later())
+    reader, writer = await conn
+    await boot()
+
+    if os.environ.get("FAKE_BOARD_IMAGE"):
+        async def board_console():
+            # A board image's console is its USB-Serial/JTAG: esp-emu's stdin.
+            while line := await asyncio.to_thread(sys.stdin.readline):
+                print(f"stdin: {line.rstrip()}", flush=True)
+        asyncio.get_running_loop().create_task(board_console())
 
     kbd_config = bytes([9, 2, 34, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 1, 3, 1, 1, 0, 9, 0x21, 0x11, 1, 0, 1, 0x22, 63, 0,
                         7, 5, 0x81, 3, 8, 0, 10])

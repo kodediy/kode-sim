@@ -9,6 +9,21 @@ change how kode-emu is used, and says so here.
 kode-sim is now **kode-emu**: it runs the Kode Dot's own firmware,
 instruction by instruction, so it is an emulator.
 
+### Added
+
+- **The USB-C port is esp-emu's, in every binary.** esp-emu 1.3.0 models the
+  P4's USB-OTG and has a USB host over co-simulation (esp-emulator#51).
+  - The firmware's own TinyUSB now runs on it unchanged, so a binary built for
+    the board or an app from the store has USB too. SD Reader is mounted as a
+    disk; BadUSB enumerates as a keyboard.
+  - kode-emu stays the computer on the cable. Its host (disks, keyboards,
+    mice) now runs its transfers through esp-emu (`--usb-host cosim`,
+    `usblink.rs`) instead of kemu's device controller, which is gone with
+    its C test.
+  - kodeOS's own dock console, a CDC-ACM device that kemu used to refuse, is
+    enumerated.
+  - kemu holds only the console and the clock now.
+
 ### Changed
 
 - **The new name is everywhere.** The command is `kode-emu`, the repository

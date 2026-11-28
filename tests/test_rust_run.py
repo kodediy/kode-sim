@@ -668,6 +668,7 @@ async def test_esp_emu_runs_as_a_kode_dot(sim, fake_emu, tmp_path):
         assert args[args.index(flag) + 1].startswith("127.0.0.1:"), flag
     assert args[args.index("--sd") + 1] == f"{tmp_path / 'card.img'},slot=0"
     assert args[args.index("--hosted-reset-gpio") + 1] == "23"
+    assert args[args.index("--usb-host") + 1] == "cosim", "the computer on the USB-C port is kode-emu's"
     assert "--net" not in args and "--save-state" not in args
     # The C5 beside it, on the other end of the SDIO socket, with the network.
     c5 = _c5_args(fake_emu)

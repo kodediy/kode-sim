@@ -9,8 +9,9 @@ same build.
 
 Since esp-emu 1.1.0 a board binary runs unchanged: kodeOS v0.1.1's factory
 pack boots in kode-emu with its screen, its microSD, and its C5's WiFi and
-BLE. What kemu still adds to a build for the emulator is the USB port's
-computer, the console over UART1 and the RTC's time.
+BLE. Since esp-emu 1.3.0 the USB-C port is esp-emu's too, with kode-emu as
+the computer on its cable. What kemu still adds to a build for the emulator
+is the console over UART1 and the RTC's time.
 
 ## Where each part stands (on esp-emu 1.3.0)
 
@@ -26,8 +27,8 @@ computer, the console over UART1 and the RTC's time.
 | The C5's infrared and 32 kHz crystal; light sleep | missing in esp-emu | [esp-emulator#54](https://github.com/espressif/esp-emulator/issues/54) |
 | esp-emu's source and terms | - | [esp-emulator#10](https://github.com/espressif/esp-emulator/issues/10) |
 | IMU, magnetometer | `kodedot-chips` (QMI8658A, QMC5883P) posed from the page (`MOTION`); no FIFO or IMU events | - |
-| USB-OTG (dock port) | kemu (`kemu_usb.c`, `models/usbdcd.c`) and a host in kode-emu: mass storage and keyboard; no isochronous (UVC) yet. esp-emu has the controller, with a host that only takes a CDC console, so a board image's port has no computer on it | a host on a socket - [esp-emulator#51](https://github.com/espressif/esp-emulator/issues/51) |
-| Console, RTC time | kemu over UART1 in a build for the emulator; a board image's console is its USB-Serial/JTAG through esp-emu's stdin and stdout | kemu's link goes with the USB port |
+| USB-OTG (the USB-C port) | esp-emu (1.3.0): the firmware's own TinyUSB on the P4's full-speed USB-OTG, in every binary; kode-emu is the computer on the cable over the co-simulation's USB host (`--usb-host cosim`, `usblink.rs`): mass storage, keyboards and mice; a CDC-ACM device (kodeOS's dock console) is enumerated and left alone. No isochronous (UVC) | - |
+| Console, RTC time | kemu over UART1 in a build for the emulator; a board image's console is its USB-Serial/JTAG through esp-emu's stdin and stdout | the console over the USB-C port's CDC-ACM, as on the board; the RTC from esp-emu |
 | NFC, RFID | absent, as on a board without them | not asked for: nothing to see on a desk |
 
 ## Next releases
@@ -37,9 +38,9 @@ computer, the console over UART1 and the RTC's time.
 - **0.3.1 - esp-emu 1.2.0**, the window in English and its speed readout.
 - **0.3.2 - esp-emu 1.3.0** (this release): no stall at the boot, and
   faster.
-- **1.0.0 - no kemu.** When esp-emu has a USB host on a socket, the USB
-  port's computer leaves kemu, and the console and the clock with it.
-  `--board` is the only build.
+- **1.0.0 - no kemu.** The USB port's computer left kemu with esp-emu
+  1.3.0. The console and the clock are what is left: then `--board` is the
+  only build.
 
 Alongside these, whenever they are ready:
 

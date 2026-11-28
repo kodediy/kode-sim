@@ -20,18 +20,19 @@
 #define KEMU_T_PANEL      0x11U  /* on u8, brightness u8 (0-100)             */
 #define KEMU_T_FB_PACKED  0x12U  /* x,y,w,h u16, then w*h RGB565 packed     */
                                  /* with kemu_pack16(); the Mac sees FB_RECT */
-#define KEMU_T_USB_IN     0x60U  /* ep_addr u8, then what the device sent: one  */
-                                 /* IN transfer, whole (an ack is zero bytes)   */
-#define KEMU_T_USB_DEV    0x61U  /* kind u8, a u8, b u16: what the device did  */
-                                 /* to the bus (KEMU_USB_DEV_* in kemu_usbdcd.h) */
-#define KEMU_T_USB_ACK    0x62U  /* ep u8, bytes u32: OUT bytes the app took, so */
-                                 /* the Mac may send that many more             */
+/* 0x60-0x62 and 0x8A-0x8C were the USB port's, which left kemu for
+ * esp-emu's USB host over co-simulation (1.3.0): kode-emu's host still
+ * speaks them to its link (crates/kode-emu/src/usblink.rs), never on UART1.
+ * The numbers stay taken. */
+#define KEMU_T_USB_IN     0x60U
+#define KEMU_T_USB_DEV    0x61U
+#define KEMU_T_USB_ACK    0x62U
 /* Mac -> firmware */
 #define KEMU_T_CONSOLE_IN 0x84U  /* raw console input (the USJ's RX)        */
 #define KEMU_T_TIME       0x88U  /* unix_us u64: the Mac's clock, for the RTC */
-#define KEMU_T_USB_BUS    0x8AU  /* kind u8: 0 cable out, 1 cable in, 2 suspend, 3 resume */
-#define KEMU_T_USB_SETUP  0x8BU  /* the 8 bytes of a SETUP packet           */
-#define KEMU_T_USB_OUT    0x8CU  /* ep u8 (0-7), then one OUT chunk, up to 4096 bytes */
+#define KEMU_T_USB_BUS    0x8AU
+#define KEMU_T_USB_SETUP  0x8BU
+#define KEMU_T_USB_OUT    0x8CU
 
 /*
  * Not the firmware's: frames between the page and the Mac, about the

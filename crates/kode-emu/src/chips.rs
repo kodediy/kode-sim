@@ -25,6 +25,10 @@ const PIN_NFC_IRQ: u8 = 29;
 /// one the P4 sends on, and ASDOUT, the one it reads.
 const PIN_I2S_DOUT: u8 = 38;
 const PIN_I2S_DIN: u8 = 33;
+/// The USB-C port's controller, as esp-emu numbers the P4's USB-OTG ports:
+/// 0 high speed, 1 full speed. kode-sdk's TinyUSB runs on the full-speed one
+/// (TINYUSB_PORT_FULL_SPEED_0).
+pub const USB_PORT: u8 = 1;
 
 /// What the board does that someone outside it sees or hears.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +43,8 @@ pub enum Out {
     Screen(Shown),
     /// The chip reset: the firmware boots again (kemu or not).
     Reset,
+    /// The USB host's port: a UsbLink or a UsbResult, for [`crate::usblink`].
+    Usb(cosim::Payload),
 }
 
 /// What happens outside the bus, for whoever shows it (a page, a log).
@@ -110,6 +116,9 @@ impl Chips {
         claims.extend(board.addrs().into_iter().map(|addr| Claim::I2c { addr, scl: SCL, sda: SDA }));
         claims.push(Claim::I2s { dout: Some(PIN_I2S_DOUT), din: Some(PIN_I2S_DIN) });
         claims.push(Claim::Dsi { vc: 0 });
+        // The computer on the Kode Dot's USB-C port: the P4's full-speed
+        // USB-OTG, its port 1 (esp-emu's own host is off it: --usb-host cosim).
+        claims.push(Claim::UsbHost { port: USB_PORT });
         client.send(&register("kodedot", &claims))?;
         client.send(&gpio_drive(0, PIN_NFC_IRQ, false))?;
         client.send(&gpio_drive(0, PIN_BUTTON_TOP, true))?;
@@ -174,6 +183,9 @@ impl Chips {
                         (self.shared.sink.lock().unwrap_or_else(PoisonError::into_inner))(Out::Screen(s));
                     }
                 }
+                p @ (Payload::UsbLink { .. } | Payload::UsbResult { .. }) => {
+                    (self.shared.sink.lock().unwrap_or_else(PoisonError::into_inner))(Out::Usb(p));
+                }
                 Payload::I2sFormat(f) => {
                     if let Some(rate) = self.shared.codec().format(f, now) {
                         (self.shared.sink.lock().unwrap_or_else(PoisonError::into_inner))(Out::MicRate(rate));
@@ -207,6 +219,12 @@ pub struct Handle {
 }
 
 impl Handle {
+    /// A transfer for the USB host's port, started now.
+    pub fn usb_transfer(&self, t: &cosim::UsbTransfer) -> io::Result<()> {
+        let now = self.shared.now_ns.load(Ordering::SeqCst);
+        self.shared.sender.send(&cosim::usb_transfer(now, t))
+    }
+
     pub fn set_buttons(&self, mask: u8) -> io::Result<()> {
         let mut b = self.shared.board();
         b.set_buttons(mask);

@@ -24,7 +24,6 @@
 #include "kemu_clock.h"
 #include "kemu_console.h"
 #include "kemu_link.h"
-#include "kemu_usb.h"
 
 #define LINK_UART      UART_NUM_1
 #define LINK_RX_RING   16384
@@ -122,7 +121,6 @@ extern void __real_app_main(void);
 void __wrap_app_main(void)
 {
     kemu_console_start();
-    kemu_usb_start();
     kemu_clock_start();
     kemu_link_start();
     kemu_clock_wait(CLOCK_WAIT_MS);

@@ -374,6 +374,28 @@ async def test_review_puts_a_real_app_through_kodeos(exe, kodeos, display_lvgl, 
         assert (out / name).stat().st_size > 1000, name
 
 
+async def test_the_computer_on_the_usb_c_port_finds_kodeos_s_own_usb(exe, kodeos, tmp_path):
+    """The USB-C port is esp-emu's (1.3.0): kodeOS's own TinyUSB runs on the
+    P4's USB-OTG, and kode-emu is the computer on the cable, over the
+    co-simulation's USB host. Plugged in, it enumerates kodeOS's dock
+    console: a CDC-ACM device, "Kode" "Dot"."""
+    k = await boot(exe, tmp_path, kodeos)
+    try:
+        await console_line(k, r"kdrv\.apps apps region ready", 60)
+        await k.send_json({"usb": {"cmd": "plug"}})
+        loop = asyncio.get_running_loop()
+        end = loop.time() + 30
+        while loop.time() < end and (k.usb.get("device") or {}).get("product") != "Dot":
+            await asyncio.sleep(0.2)
+        dev = k.usb.get("device") or {}
+        assert dev.get("product") == "Dot", json.dumps(k.usb)[:2000]
+        config = next((l for l in k.usb.get("log", []) if "SET_CONFIGURATION 1" in l), "")
+        # Its two interfaces: CDC control (2, 2, 0) and CDC data (10, 0, 0).
+        assert "(2, 2, 0)" in config and "(10, 0, 0)" in config, k.usb.get("log")
+    finally:
+        await k.stop()
+
+
 def test_kodeos_is_built_without_the_link_rest(kodeos):
     """kodeOS's link rest reads the panel back over raw DSI packets on the
     wake, which esp-emu cannot answer: sdkconfig.emu turns it off, and the

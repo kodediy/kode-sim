@@ -283,9 +283,10 @@ pub async fn launch(cfg: &Launch, on_line: Arc<dyn Fn(String) + Send + Sync>) ->
         .args(["--uart1-tcp", &format!("127.0.0.1:{port}")])
         .args(["--control-tcp", &control])
         .args(["--cosim-tcp", &cosim])
-        // The Kode Dot's console is its USB-Serial/JTAG. A board image also
-        // opens a CDC console on the USB-OTG port, which esp-emu would print
-        // beside it, every line twice.
+        // The computer on the USB-C port is kode-emu's (usblink): esp-emu's
+        // own host stays off it, so the device is enumerated once.
+        .args(["--usb-host", "cosim"])
+        // The Kode Dot's console is its USB-Serial/JTAG.
         .args(["--console", "usb-jtag"]);
     if let Some(sd) = &cfg.sd {
         cmd.arg("--sd").arg(sd_arg(sd));
@@ -616,6 +617,14 @@ impl Emu {
     pub async fn reset(&self) -> io::Result<()> {
         self.resets.fetch_add(1, Ordering::SeqCst);
         self.control("reset", Duration::from_secs(5)).await.map(|_| ())
+    }
+
+    /// A transfer for the USB host's port ([`crate::usblink`]), once the
+    /// chips are attached.
+    pub fn usb_transfer(&self, t: &cosim::UsbTransfer) {
+        if let Some(c) = self.clock.get() {
+            let _ = c.usb_transfer(t);
+        }
     }
 
     /// The emulated time, in ns since the chip's last reset, as the board's

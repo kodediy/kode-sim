@@ -10,8 +10,9 @@ leaves on the wire), "poweroff" sends POWER_OFF, "flood N" sends N whole-screen 
 ready behind a prompt and its erase, an ack per chunk, the CRC checked;
 FAKE_INSTALL_REFUSE makes it refuse, $FAKE_INSTALL_SLOW seconds of erase
 before the ready), "key MODS KEY" (decimal) sends a keyboard report, anything else is echoed.
-The USB cable has a keyboard on it: it raises its pull-up when the cable comes in and
-answers the host's SETUP packets as a boot keyboard's TinyUSB would. Every other frame from the Mac is printed as "rx <type> <len>".
+The USB-C port has a keyboard on it, over the co-simulation's USB host (esp-emu 1.3.0):
+once a consumer claims the port it is attached, and it answers the host's transfers as a
+boot keyboard's TinyUSB would. Every other frame from the Mac is printed as "rx <type> <len>".
 Like kodeOS, every boot prints its "Project name:" (kodeos); an
 install with run=on reboots into the app ("Project name: app", or
 $FAKE_APP_NAME), whose console echoes; BOT held 0.6 s in the app goes home
@@ -182,6 +183,9 @@ async def main() -> int:
 
     # ---- --cosim-tcp: the board's chips, beside the chip -------------------
     chips = {"writer": None, "next": 1, "waiting": {}}
+    # The USB-C port's device, over the host's co-simulation (esp-emu 1.3.0):
+    # the IN transfers waiting on each endpoint, and reports not yet asked for.
+    usb = {"port": None, "reads": {}, "reports": {}}
     t0 = loop.time()
     i2s = {"rx": None, "frames": 0, "peak": 0}
 
@@ -280,8 +284,19 @@ async def main() -> int:
                     if 17 in c:                           # Claim.i2s
                         p = fields(c[17])
                         print(f"fake: i2s dout {p.get(3)} din {p.get(4)}", flush=True)
+                    if 24 in c:                           # Claim.usb_host
+                        usb["port"] = fields(c[24]).get(1, 0)
+                        print(f"fake: usb host on port {usb['port']}", flush=True)
                 ack = vf(1, 1) + ld(2, b"esp32p4") + vf(3, 55) + vf(5, 1)
                 to_chips(ld(5, ack))
+                if usb["port"] is not None:
+                    # The keyboard's TinyUSB has its pull-up on from the boot.
+                    # Not stamped, as the register's answer is not: the fake
+                    # keeps no emulated clock a review would hold by.
+                    to_chips(ld(43, vf(1, 1) + vf(2, 1)))   # UsbLink, full speed
+                await cwriter.drain()
+            elif 44 in m:                                 # UsbTransfer
+                usb_transfer(fields(m[44]))
                 await cwriter.drain()
             elif 6 in m:                                  # GpioDrive
                 g = fields(m[6])
@@ -370,33 +385,49 @@ async def main() -> int:
         config[2:4] = len(config).to_bytes(2, "little")
         kbd_config = bytes(config)
 
-    def usb_in(ep, data):
-        writer.write(kd.encode(kd.USB_IN, bytes([ep]) + data))
+    def usb_result(ident, status, data=b"", sent=0):
+        """UsbResult: 1 ok, 2 stall."""
+        r = vf(1, ident) + vf(2, status) + (ld(3, data) if data else b"") + (vf(4, sent) if sent else b"")
+        to_chips(ld(45, r))
 
-    def usb_setup(s):
-        """What TinyUSB answers a host's control request with, for a keyboard."""
+    def usb_control(s):
+        """What TinyUSB answers a host's control request with, for a keyboard:
+        (status, data)."""
         kind, req, _, vtype, _, _, wl = s[0], s[1], s[2], s[3], s[4], s[5], int.from_bytes(s[6:8], "little")
         if (kind, req) == (0x80, 6):
             d = {1: kbd_device, 2: kbd_config,
                  3: bytes([2 + 2 * len("Fake"), 3]) + "Fake".encode("utf-16-le")}.get(vtype)
-            if d is None:
-                writer.write(kd.encode(kd.USB_DEV, bytes([2, 0x80, 0, 0])))        # stall
-                return
-            d = d[:wl]
-            for i in range(0, len(d), 64):
-                usb_in(0x80, d[i:i + 64])
-            if len(d) % 64 == 0 and len(d) < wl:
-                usb_in(0x80, b"")
-        elif kind == 0x81 and req == 6 and vtype == 0x22 and s[4] in report_descriptors:
-            d = report_descriptors[s[4]][:wl]
-            for i in range(0, len(d), 64):
-                usb_in(0x80, d[i:i + 64])
-            if len(d) % 64 == 0 and len(d) < wl:
-                usb_in(0x80, b"")
-        elif kind in (0x00, 0x21):
-            usb_in(0x80, b"")                                                      # status of a write
+            return (2, b"") if d is None else (1, d[:wl])
+        if kind == 0x81 and req == 6 and vtype == 0x22 and s[4] in report_descriptors:
+            return 1, report_descriptors[s[4]][:wl]
+        if kind in (0x00, 0x21):
+            return 1, b""                                                          # a write's status
+        return 2, b""
+
+    def usb_transfer(t):
+        ident, ep = t.get(1, 0), t.get(2, 0)
+        if ep == 0:
+            status, data = usb_control(bytes(t.get(3, b"")))
+            usb_result(ident, status, data, len(t.get(4, b"")))
+        elif ep & 0x80:
+            queued = usb["reports"].get(ep)
+            if queued:
+                usb_result(ident, 1, queued.pop(0))
+            else:
+                usb["reads"].setdefault(ep, []).append(ident)
         else:
-            writer.write(kd.encode(kd.USB_DEV, bytes([2, 0x80, 0, 0])))
+            usb_result(ident, 1, sent=len(t.get(4, b"")))
+
+    def usb_in(ep, data):
+        """A report the device queues on IN endpoint `ep`: to the host's
+        read waiting there, or kept for its next one."""
+        if chips["writer"] is None:
+            return
+        reads = usb["reads"].get(ep)
+        if reads:
+            usb_result(reads.pop(0), 1, data)
+        else:
+            usb["reports"].setdefault(ep, []).append(data)
 
     async def uart():
         d = kd.Decoder()
@@ -404,13 +435,6 @@ async def main() -> int:
             for t, p in d.feed(data):
                 if t == kd.CONSOLE_IN:
                     console.put_nowait(p)
-                elif t == kd.USB_BUS:
-                    print(f"usb bus {p[0]}", flush=True)
-                    writer.write(kd.encode(kd.USB_DEV, bytes([1, 1 if p[0] == 1 else 0, 0, 0])))   # the pull-up
-                elif t == kd.USB_SETUP:
-                    usb_setup(p)
-                elif t == kd.USB_OUT:
-                    pass
                 else:
                     print(f"rx {t} {len(p)}" + (f" {p.hex()}" if t == kd.TIME else ""), flush=True)
         console.put_nowait(None)
@@ -484,13 +508,15 @@ async def main() -> int:
                 endpoint, report_id = report_sources["key"]
                 prefix = b"" if report_id is None else bytes([report_id])
                 usb_in(endpoint, prefix + bytes([mods, 0, key, 0, 0, 0, 0, 0]))
-                await writer.drain()
+                if chips["writer"] is not None:
+                    await chips["writer"].drain()
             elif line.startswith("mouse "):
                 buttons, x, y, wheel = (int(x) for x in line.split()[1:5])
                 endpoint, report_id = report_sources["mouse"]
                 prefix = b"" if report_id is None else bytes([report_id])
                 usb_in(endpoint, prefix + struct.pack("Bbbb", buttons, x, y, wheel))
-                await writer.drain()
+                if chips["writer"] is not None:
+                    await chips["writer"].drain()
             elif line.startswith("cut "):                    # N: a frame a reset cuts short
                 writer.write(b"KD" + struct.pack("<BI", 0x12, int(line.split()[1])) + bytes(4))
                 await writer.drain()

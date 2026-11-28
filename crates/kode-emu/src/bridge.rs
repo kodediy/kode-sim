@@ -391,6 +391,8 @@ pub struct Bridge {
     serial: Mutex<Option<Arc<Serial>>>,
     /// The computer at the other end of the USB cable, started with the first boot.
     usb: std::sync::OnceLock<UsbHost>,
+    /// The USB host's frames, as esp-emu's transfers on the USB-C port.
+    usb_link: Mutex<crate::usblink::Link>,
     next_id: AtomicU64,
     /// How many pages have ever joined.
     joined: AtomicU64,
@@ -433,6 +435,7 @@ impl Bridge {
             installing: Arc::new(tokio::sync::Mutex::new(())),
             serial: Mutex::new(None),
             usb: std::sync::OnceLock::new(),
+            usb_link: Mutex::new(crate::usblink::Link::new()),
             next_id: AtomicU64::new(1),
             joined: AtomicU64::new(0),
             uart_bytes: AtomicU64::new(0),
@@ -519,9 +522,8 @@ impl Bridge {
             let wire_to = Arc::downgrade(self);
             let wire: crate::usbhost::Wire = Arc::new(move |t, p| {
                 if let Some(me) = wire_to.upgrade() {
-                    if let Some(emu) = me.lock().running_emu() {
-                        emu.send(t, p);
-                    }
+                    let todo = me.usb_link.lock().unwrap_or_else(PoisonError::into_inner).host_said(t, p);
+                    me.usb_do(todo);
                 }
             });
             let emit_to = Arc::downgrade(self);
@@ -534,6 +536,25 @@ impl Bridge {
             });
             UsbHost::start(wire, emit)
         });
+    }
+
+    /// What the USB link says to do: transfers to the running emulator,
+    /// frames to the host.
+    fn usb_do(&self, todo: Vec<crate::usblink::Do>) {
+        for d in todo {
+            match d {
+                crate::usblink::Do::Transfer(t) => {
+                    if let Some(emu) = self.lock().running_emu() {
+                        emu.usb_transfer(&t);
+                    }
+                }
+                crate::usblink::Do::Host(t, p) => {
+                    if let Some(u) = self.usb.get() {
+                        u.firmware_said(t, &p);
+                    }
+                }
+            }
+        }
     }
 
     fn spawn_pump(self: &Arc<Self>, emu: Arc<Emu>, mut uart: tokio::net::tcp::OwnedReadHalf) {
@@ -589,6 +610,11 @@ impl Bridge {
                         emu.kemu_gone();
                         continue;
                     }
+                    Out::Usb(p) => {
+                        let todo = me.usb_link.lock().unwrap_or_else(PoisonError::into_inner).emu_said(&p);
+                        me.usb_do(todo);
+                        continue;
+                    }
                 };
                 me.from_firmware(frame.0, frame.1);
             }
@@ -629,13 +655,6 @@ impl Bridge {
 
     /// One frame from the firmware (or from the chips, standing in for it).
     pub fn from_firmware(self: &Arc<Self>, t: u8, p: Vec<u8>) {
-        // The USB cable's traffic is the computer's, not the pages'.
-        if matches!(t, proto::USB_IN | proto::USB_DEV | proto::USB_ACK) {
-            if let Some(u) = self.usb.get() {
-                u.firmware_said(t, &p);
-            }
-            return;
-        }
         let mut st = self.lock();
         match t {
             proto::HELLO => {

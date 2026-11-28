@@ -40,6 +40,7 @@ class Kode:
         self.sim, self.cache = sim, cache
         self.backlog: collections.deque[tuple[int, bytes]] = collections.deque()
         self.console: list[str] = []          # every line, from the first
+        self.usb: dict = {}                   # the computer on the USB-C port, as last told
         self.on_line: list = []
         self.state = None
         self.last_frame_at: dict[int, float] = {}   # frame type: loop time it last came
@@ -85,6 +86,8 @@ class Kode:
                             f(j["console"])
                     if "state" in j:
                         self.state = j["state"]
+                    if "usb" in j:
+                        self.usb = j["usb"]
                 self._more.set()
         finally:
             self._eof = True

@@ -368,12 +368,13 @@ maths against the compass's own formula.
 
 ## The USB cable
 
-The dock port is a USB device controller; the apps that use it (SD Reader,
-BadUSB, Air Mouse, Webcam) run the real TinyUSB over it. kemu replaces
-TinyUSB's controller driver (`dcd_*`, `firmware/kemu/models/usbdcd.c`, pure
-C and tested on the host) so the app's stack, descriptors and classes run
-unchanged, and the "bus" is the page: `crates/kode-emu/src/usbhost.rs` is
-the computer on the other end of the cable (USB_* frames in `kemu_proto.h`).
+The USB-C port is the P4's full-speed USB-OTG, modelled by esp-emu since
+1.3.0. The firmware's own TinyUSB runs on it, unchanged, in every binary: a
+build for the emulator, a build for the board, an app from the store (SD
+Reader, BadUSB, Air Mouse, Webcam). kode-emu is the computer on the other
+end of the cable (`crates/kode-emu/src/usbhost.rs`): it claims the port on
+esp-emu's co-simulation (`--usb-host cosim`, so esp-emu's own host stays
+off it) and runs its transfers there (`usblink.rs`).
 
 On the page, **Computer (USB)** plugs the cable (which also powers the
 board) and pulls it out, with or without ejecting first. The computer
@@ -386,14 +387,18 @@ enumerates what answers: its descriptors, `SET_ADDRESS`,
   (up to 700 KB, or 1 MB of random bytes to measure the speed), reads one
   back with its CRC, and ejects (`START STOP UNIT`). It shows the MB/s and
   what the computer is doing, command by command;
-- a **keyboard** has its reports decoded into the text a computer would
-  type, on a Spanish or a US layout.
+- a **keyboard** or a **mouse** has its reports decoded from its HID
+  report descriptor: the text a computer would type, on a Spanish or a US
+  layout, and the pointer's moves, buttons and wheel;
+- a **CDC-ACM** device (kodeOS's own dock console) is enumerated and left
+  alone.
 
 A restart of the Kode Dot finds the cable where it was and is enumerated
-again. Limits: no 64-byte packets or bus timing (an IN transfer goes out
-whole, so speeds are the emulator's, not the bus's), no isochronous
-endpoints yet (so the Webcam's video is not shown), and tinyusb's own
-`tinyusb_driver_install` (kodeOS's dock) still answers "not supported".
+again. Limits: transfers cross whole, with no bus timing (speeds are the
+emulator's, not the bus's); no isochronous endpoints yet (so the Webcam's
+video is not shown); and pulling the cable out is the computer's side only,
+since esp-emu does not model VBUS on the port: the firmware sees the host
+stop talking, not the cable go.
 
 ## What is simulated, and what is not
 

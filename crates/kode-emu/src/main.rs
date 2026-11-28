@@ -23,6 +23,7 @@ mod sdcard;
 mod serial;
 mod usbconfig;
 mod usbhost;
+mod usblink;
 mod web;
 mod window;
 

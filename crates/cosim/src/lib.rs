@@ -30,6 +30,44 @@ pub enum Claim {
     /// The panel on this virtual channel of the MIPI-DSI link (0..3): it
     /// hears the commands the firmware sends it and the frames it shows.
     Dsi { vc: u8 },
+    /// The computer on the other end of a USB-OTG port's cable (ESP32-P4: 0
+    /// high speed, 1 full speed): the emulator's own host leaves the port,
+    /// [`Payload::UsbLink`] says when a device is there, and
+    /// [`usb_transfer`] runs transfers on it (esp-emu 1.3.0).
+    UsbHost { port: u8 },
+}
+
+/// One transfer the USB host runs (UsbTransfer): a control transfer with
+/// its 8-byte `setup` on endpoint 0, else `data` out, or up to `length`
+/// bytes in (bit 7 of `endpoint`). Each is answered by a
+/// [`Payload::UsbResult`] that quotes `id`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsbTransfer {
+    pub id: u64,
+    pub endpoint: u8,
+    pub setup: Vec<u8>,
+    pub data: Vec<u8>,
+    pub length: u32,
+    /// How long it may wait on an endpoint the firmware has not armed, in
+    /// microseconds of emulated time; 0, until the device leaves.
+    pub timeout_us: u32,
+}
+
+/// How a [`UsbTransfer`] ended (UsbStatus).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsbStatus {
+    Ok,
+    /// The endpoint answered STALL.
+    Stall,
+    /// `timeout_us` passed with the endpoint not armed.
+    Timeout,
+    /// No device: detached, in reset, or gone meanwhile.
+    NoDevice,
+    /// A packet that does not fit what was asked for.
+    Overflow,
+    /// Not run: no such endpoint, a bad SETUP, or too many waiting.
+    Refused,
+    Other(u64),
 }
 
 /// The pixels of a DSI video stream ([`Dsi::Format`]): the frame buffer's
@@ -113,6 +151,20 @@ pub enum Payload {
     I2sOut(Vec<u8>),
     /// For the panel on a DSI virtual channel.
     Dsi(Dsi),
+    /// The USB host's port: a device is there (its pull-up is on and its
+    /// bus reset over) or not; sent once the claim is in and on each change.
+    UsbLink {
+        attached: bool,
+        high_speed: bool,
+    },
+    /// How a [`UsbTransfer`] ended: what the device sent, and how many
+    /// bytes of the transfer's data it took.
+    UsbResult {
+        id: u64,
+        status: UsbStatus,
+        data: Vec<u8>,
+        sent: u32,
+    },
     Other,
 }
 
@@ -227,6 +279,11 @@ pub fn register(name: &str, claims: &[Claim]) -> Vec<u8> {
                 vf(&mut dsi, 1, vc as u64);
                 ld(&mut inner, 20, &dsi);
             }
+            Claim::UsbHost { port } => {
+                let mut usb = vec![];
+                vf(&mut usb, 1, port as u64);
+                ld(&mut inner, 24, &usb);
+            }
         }
         ld(&mut reg, 3, &inner);
     }
@@ -268,6 +325,30 @@ pub fn i2s_in(pcm: &[u8]) -> Vec<u8> {
     ld(&mut i, 1, pcm);
     let mut out = vec![];
     ld(&mut out, 31, &i);
+    out
+}
+
+/// EmulatorMessage{sim_time_ns, usb_transfer}: `t`, started at `at_ns`
+/// (a time already past starts it at once). Needs [`Claim::UsbHost`].
+pub fn usb_transfer(at_ns: u64, t: &UsbTransfer) -> Vec<u8> {
+    let mut u = vec![];
+    vf(&mut u, 1, t.id);
+    vf(&mut u, 2, t.endpoint as u64);
+    if !t.setup.is_empty() {
+        ld(&mut u, 3, &t.setup);
+    }
+    if !t.data.is_empty() {
+        ld(&mut u, 4, &t.data);
+    }
+    if t.length != 0 {
+        vf(&mut u, 5, t.length as u64);
+    }
+    if t.timeout_us != 0 {
+        vf(&mut u, 6, t.timeout_us as u64);
+    }
+    let mut out = vec![];
+    vf(&mut out, 1, at_ns);
+    ld(&mut out, 44, &u);
     out
 }
 
@@ -354,6 +435,26 @@ pub fn decode(buf: &[u8]) -> Option<Message> {
                 m.payload = Payload::I2sOut(pcm);
             }
             36 => m.payload = Payload::Dsi(dsi_event(b)?),
+            43 => {
+                let f = fields(b)?;
+                let varint = |k: u32| f.iter().find(|x| x.0 == k).map_or(0, |x| x.1);
+                m.payload = Payload::UsbLink { attached: varint(1) != 0, high_speed: varint(2) == 2 };
+            }
+            45 => {
+                let f = fields(b)?;
+                let varint = |k: u32| f.iter().find(|x| x.0 == k).map_or(0, |x| x.1);
+                let status = match varint(2) {
+                    1 => UsbStatus::Ok,
+                    2 => UsbStatus::Stall,
+                    3 => UsbStatus::Timeout,
+                    4 => UsbStatus::NoDevice,
+                    5 => UsbStatus::Overflow,
+                    6 => UsbStatus::Refused,
+                    o => UsbStatus::Other(o),
+                };
+                let data = f.iter().find(|x| x.0 == 3).map_or(vec![], |x| x.2.to_vec());
+                m.payload = Payload::UsbResult { id: varint(1), status, data, sent: varint(4) as u32 };
+            }
             _ => {}
         }
     }

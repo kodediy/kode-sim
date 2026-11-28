@@ -9,7 +9,7 @@ pub const TRANSFER_BULK: u8 = 2;
 pub const TRANSFER_INTERRUPT: u8 = 3;
 pub const DESC_HID: u8 = 0x21;
 pub const DESC_REPORT: u8 = 0x22;
-/// kemu_usbdcd.h: KEMU_USB_EPS includes control endpoint zero.
+/// The endpoints a device may have, control endpoint zero included.
 pub const CONTROLLER_ENDPOINTS: u8 = 8;
 
 #[derive(Debug, Clone)]

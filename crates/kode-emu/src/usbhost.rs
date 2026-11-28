@@ -1,8 +1,8 @@
 //! The computer on the other end of the Kode Dot's USB cable.
 //!
-//! The firmware's TinyUSB runs unchanged over kemu's device controller
-//! (`firmware/kemu/models/usbdcd.c`); this is the host that controller talks
-//! to. It plugs and unplugs the cable, enumerates what answers (the device,
+//! The firmware's TinyUSB runs unchanged on the P4's USB-OTG, which esp-emu
+//! models; this is the computer on the cable, over the co-simulation's USB
+//! host ([`crate::usblink`] carries its frames there). It plugs and unplugs the cable, enumerates what answers (the device,
 //! configuration and string descriptors, SET_ADDRESS, SET_CONFIGURATION), and
 //! then behaves as a computer does with what it found:
 //!
@@ -16,7 +16,8 @@
 //!   Keyboard usages retain the US and Spanish text translation; mouse
 //!   buttons, relative motion and absolute axes remain entirely virtual.
 //!
-//! The wire is kemu_proto.h's USB_* frames. Everything here runs on one
+//! It speaks the USB_* frames of kemu_proto.h, which were kemu's device
+//! controller's and are now [`crate::usblink`]'s. Everything here runs on one
 //! thread of its own, which owns the state and blocks on the frames it
 //! waits for; the bridge hands it frames and commands through a channel and
 //! takes JSON snapshots back (`{"usb": {...}}`), for the page.
@@ -38,7 +39,7 @@ pub const BUS_CABLE_IN: u8 = 1;
 pub const DEV_PULLUP: u8 = 1;
 pub const DEV_STALL: u8 = 2;
 pub const DEV_CLEAR: u8 = 3;
-/// The stack opened an endpoint (kemu_usbdcd.h).
+/// The stack opened an endpoint (kemu's device controller had these; none now).
 pub const DEV_EP_OPEN: u8 = 4;
 /// The stack closed an endpoint, or all endpoints (0xff).
 pub const DEV_EP_CLOSE: u8 = 6;

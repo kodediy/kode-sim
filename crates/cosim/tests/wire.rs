@@ -120,3 +120,35 @@ fn a_dsi_command_a_format_and_rows_are_read_back() {
     let m = decode(&raw("0807a2020e1a0c080210071801220401020304")).unwrap();
     assert_eq!(m.payload, Payload::Dsi(Dsi::Rows { frame: 2, y: 7, rows: 1, pixels: vec![1, 2, 3, 4] }));
 }
+
+// The USB host over co-simulation (esp-emu 1.3.0), byte for byte as
+// esp-emulator's tools/cosim_tcp/wire.py encodes it.
+
+#[test]
+fn a_usb_host_claims_a_port() {
+    assert_eq!(hex(&register("kode-emu", &[Claim::UsbHost { port: 1 }])), "2213080112086b6f64652d656d751a05c201020801");
+}
+
+#[test]
+fn a_usb_transfer_carries_its_setup_its_data_or_its_length() {
+    let get_device = [0x80, 6, 0, 1, 0, 0, 18, 0];
+    let t =
+        UsbTransfer { id: 7, endpoint: 0, setup: get_device.to_vec(), data: vec![], length: 0, timeout_us: 1_000_000 };
+    assert_eq!(hex(&usb_transfer(5, &t)), "0805e20212080710001a08800600010000120030c0843d");
+    let out = UsbTransfer { id: 9, endpoint: 0x02, setup: vec![], data: b"abc".to_vec(), length: 0, timeout_us: 0 };
+    assert_eq!(hex(&usb_transfer(0, &out)), "0800e20209080910022203616263");
+    let inn = UsbTransfer { id: 10, endpoint: 0x81, setup: vec![], data: vec![], length: 64, timeout_us: 0 };
+    assert_eq!(hex(&usb_transfer(0, &inn)), "0800e20207080a1081012840");
+}
+
+#[test]
+fn a_usb_link_and_a_usb_result_are_read_back() {
+    let unhex =
+        |s: &str| (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect::<Vec<u8>>();
+    let m = decode(&unhex("087bda020408011001")).unwrap();
+    assert_eq!((m.sim_time_ns, m.payload), (123, Payload::UsbLink { attached: true, high_speed: false }));
+    let m = decode(&unhex("08c803ea020a080710011a0212012003")).unwrap();
+    assert_eq!(m.payload, Payload::UsbResult { id: 7, status: UsbStatus::Ok, data: vec![0x12, 0x01], sent: 3 });
+    let m = decode(&unhex("ea020408081002")).unwrap();
+    assert_eq!(m.payload, Payload::UsbResult { id: 8, status: UsbStatus::Stall, data: vec![], sent: 0 });
+}

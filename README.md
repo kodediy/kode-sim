@@ -46,7 +46,7 @@ Several people in the [Discord](https://discord.gg/gZSNXRytFV) are writing their
 
 kode-emu runs on esp-emu 1.3.0, which models the Kode Dot's screen (MIPI-DSI), its microSD (SDMMC) and its ESP32-C5 (ESP-Hosted over SDIO). **A binary built for the board runs unchanged**: kodeOS's own release, `kode-emu build --board`'s, an app from apps.kode.diy. The C5 runs Kode's own C5 firmware, [kode_slave_c5](https://github.com/kodediy/kode_slave_c5), in a second esp-emu beside the P4.
 
-What esp-emu does not have yet, `kemu` does from inside the firmware: a small component that `kode-emu build` links into the app. Today it holds only the USB port's computer, the console and the clock. When kemu is empty, `kode-emu build` and `kode-emu build --board` will be the same build.
+What esp-emu does not have yet, `kemu` does from inside the firmware: a small component that `kode-emu build` links into the app. Today it holds only the console and the clock. When kemu is empty, `kode-emu build` and `kode-emu build --board` will be the same build.
 
 | Part of the Kode Dot | Today | Waits for |
 |---|---|---|
@@ -59,14 +59,14 @@ What esp-emu does not have yet, `kemu` does from inside the firmware: a small co
 | WiFi (ESP32-C5) | ✅ Kode's C5 firmware in esp-emu, over ESP-Hosted; one open network, `kode-emu` | |
 | Bluetooth (ESP32-C5) | 🟡 the C5's BLE comes up and advertises; nothing on your computer connects to it yet | a BLE peer through esp-emu's `--ble-hci` |
 | JPEG and PPA | 🟡 esp-emu has them; kode-emu's tests do not try them yet | |
-| USB port | 🟡 kemu, with a simulated computer: its disk and its keyboard (a build for the emulator only) | moving to esp-emu 1.3.0's USB host over co-simulation ([esp-emulator#51](https://github.com/espressif/esp-emulator/issues/51)), for every binary |
+| USB port | ✅ esp-emu's USB-OTG, the firmware's own TinyUSB, in every binary (SD Reader and BadUSB from the store); kode-emu is the computer on the cable: disks, keyboards and mice | |
 | Infrared, the 32 kHz crystal, light sleep | ❌ | esp-emu ([esp-emulator#54](https://github.com/espressif/esp-emulator/issues/54)) |
 | NFC, 125 kHz RFID | ❌ absent, as on a board without them | |
 | Speed | 🟡 kodeOS boots and runs in real time on an Apple M-series Mac; heavy apps and smaller computers go slower, since each emulator runs on one core. Settings shows the speed | [esp-emulator#53](https://github.com/espressif/esp-emulator/issues/53) |
 
 ✅ works · 🟡 works, through a stand-in or with limits · ❌ not yet
 
-**What is planned.** esp-emu 1.3.0 has a USB host over co-simulation ([esp-emulator#51](https://github.com/espressif/esp-emulator/issues/51)): the USB port's computer moves there, and then kemu is empty. The [roadmap](docs/ROADMAP.md) has the details and the open requests to Espressif.
+**What is planned.** The console and the clock leave kemu, and then kemu is empty: one build for the board and the emulator. The [roadmap](docs/ROADMAP.md) has the details and the open requests to Espressif.
 
 ## Install
 
@@ -114,8 +114,9 @@ kode-emu review my-app.bin                             # boot it headless and ch
  │ kode.h → Active Objects → kdrv (unchanged)       │ cosim-tcp  │  TCA6408A, CST820, KTD2026,        │
  │ I2C, GPIO, I2S, MIPI-DSI ────────────────────────┼────────────┤  AW86233, BQ25896, CW2217, ES8311, │
  │ SDMMC: the microSD (a card image)                │            │  QMI8658A, QMC5883P, the AMOLED    │
- │ kemu: USB, console ──────────────────────────────┼── UART1 ───┤ bridge: the window, the console,   │
- │ SDIO (ESP-Hosted) ──┐                            │            │  the USB host                      │
+ │ kemu: console, clock ────────────────────────────┼── UART1 ───┤ bridge: the window, the console    │
+ │ USB-OTG: the firmware's TinyUSB ─────────────────┼ cosim-tcp ─┤ the computer on the USB-C cable    │
+ │ SDIO (ESP-Hosted) ──┐                            │            │                                    │
  └─────────────────────┼────────────────────────────┘            └────────────────────────────────────┘
  ┌─ esp-emu (ESP32-C5) ┴────────────────────────────┐
  │ kode_slave_c5: WiFi, BLE ── the network "kode-emu" → your computer's connection
@@ -124,7 +125,8 @@ kode-emu review my-app.bin                             # boot it headless and ch
 
 - **The chips** of the board are modelled in Rust (`crates/kodedot-chips`). They answer the P4's I2C and drive its pins through esp-emu's co-simulation bus, as the real chips answer kode-sdk's drivers.
 - **The screen, the microSD and the C5** are esp-emu's: kode-emu takes the screen's frames from its MIPI-DSI link, gives it the card image, and starts a second esp-emu with Kode's C5 firmware on the other end of the SDIO link.
-- **kemu** (`firmware/kemu`) stands in for the parts esp-emu does not have yet: the USB port's computer, the console and the clock. It replaces a few driver calls when the app is linked, and talks to kode-emu over a UART.
+- **The USB-C port** is esp-emu's too: the firmware's own TinyUSB runs on the P4's USB-OTG, and kode-emu is the computer on the cable (`crates/kode-emu/src/usbhost.rs`), over the co-simulation's USB host (`usblink.rs`).
+- **kemu** (`firmware/kemu`) stands in for the parts esp-emu does not have yet: the console and the clock. It replaces a few driver calls when the app is linked, and talks to kode-emu over a UART.
 - **The window** (`web/`) is a page that kode-emu serves, connected by a WebSocket.
 
 ## Layout

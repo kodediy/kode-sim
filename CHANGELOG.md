@@ -4,6 +4,31 @@ What changes from one kode-sim release to the next. The versions follow
 [SemVer](https://semver.org): until 1.0 a minor release (0.2, 0.3…) may
 change how kode-sim is used, and says so here.
 
+## [Unreleased]
+
+### Changed
+
+- **esp-emu 1.3.0** (was 1.2.0). kodeOS boots with no stall while its P4
+  talks to the C5 (esp-emulator#70, 0.3.1's known issue): no second of the
+  boot under 0.93× real time on an Apple M5 Pro, where 1.2.0 had nine under
+  0.3×. Its faster interpreter runs kodeOS's face, Kody playing, at 1.00×
+  with about two thirds of a core, where 1.2.0 needed all of it.
+
+### Fixed
+
+- **The radio test app mounts its card.** Since kode-sdk's #313 an app's
+  microSD is mounted when it is first used, not when the C5's link comes
+  up: the test app mounts it, and the test checks that the card mounts with
+  the link up, the two on one SDMMC controller.
+
+### Known issue
+
+- **Console input that arrives while kodeOS brings its C5 link up is
+  damaged** (#22): an install or a `file_put` in the first seconds after
+  the boot fails with "CRC mismatch". It is not new in esp-emu 1.3.0, but
+  `kode-sim review` installs sooner on it and meets it: its emulator test
+  is marked as a known failure until #22 is understood.
+
 ## [0.3.1] - 2026-11-22
 
 The window is in English and says how fast the Kode Dot runs, and kode-sim

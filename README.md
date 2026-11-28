@@ -6,7 +6,7 @@
 
 **The Kode Dot simulator: kodeOS and your apps, without the board**
 
-[![esp-emu 1.2.0](https://img.shields.io/badge/esp--emu-1.2.0-E7352C?logo=espressif&logoColor=white)](https://github.com/espressif/esp-emulator)
+[![esp-emu 1.3.0](https://img.shields.io/badge/esp--emu-1.3.0-E7352C?logo=espressif&logoColor=white)](https://github.com/espressif/esp-emulator)
 [![ESP-IDF v6.1](https://img.shields.io/badge/ESP--IDF-v6.1-E7352C?logo=espressif&logoColor=white)](https://github.com/espressif/esp-idf)
 ![Language: Rust](https://img.shields.io/badge/language-Rust-555555?logo=rust&logoColor=white)
 [![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-2ea44f)](LICENSE)
@@ -44,7 +44,7 @@ Several people in the [Discord](https://discord.gg/gZSNXRytFV) are writing their
 
 ## Status
 
-kode-sim runs on esp-emu 1.2.0, which models the Kode Dot's screen (MIPI-DSI), its microSD (SDMMC) and its ESP32-C5 (ESP-Hosted over SDIO). **A binary built for the board runs unchanged**: kodeOS's own release, `kode-sim build --board`'s, an app from apps.kode.diy. The C5 runs Kode's own C5 firmware, [kode_slave_c5](https://github.com/kodediy/kode_slave_c5), in a second esp-emu beside the P4.
+kode-sim runs on esp-emu 1.3.0, which models the Kode Dot's screen (MIPI-DSI), its microSD (SDMMC) and its ESP32-C5 (ESP-Hosted over SDIO). **A binary built for the board runs unchanged**: kodeOS's own release, `kode-sim build --board`'s, an app from apps.kode.diy. The C5 runs Kode's own C5 firmware, [kode_slave_c5](https://github.com/kodediy/kode_slave_c5), in a second esp-emu beside the P4.
 
 What esp-emu does not have yet, `kemu` does from inside the firmware: a small component that `kode-sim build` links into the app. Today it holds only the USB port's computer, the console and the clock. When kemu is empty, `kode-sim build` and `kode-sim build --board` will be the same build.
 
@@ -59,14 +59,14 @@ What esp-emu does not have yet, `kemu` does from inside the firmware: a small co
 | WiFi (ESP32-C5) | ✅ Kode's C5 firmware in esp-emu, over ESP-Hosted; one open network, `kode-sim` | |
 | Bluetooth (ESP32-C5) | 🟡 the C5's BLE comes up and advertises; nothing on your computer connects to it yet | a BLE peer through esp-emu's `--ble-hci` |
 | JPEG and PPA | 🟡 esp-emu has them; kode-sim's tests do not try them yet | |
-| USB port | 🟡 kemu, with a simulated computer: its disk and its keyboard (a build for the simulator only) | a USB host in esp-emu ([esp-emulator#51](https://github.com/espressif/esp-emulator/issues/51)) |
+| USB port | 🟡 kemu, with a simulated computer: its disk and its keyboard (a build for the simulator only) | moving to esp-emu 1.3.0's USB host over co-simulation ([esp-emulator#51](https://github.com/espressif/esp-emulator/issues/51)), for every binary |
 | Infrared, the 32 kHz crystal, light sleep | ❌ | esp-emu ([esp-emulator#54](https://github.com/espressif/esp-emulator/issues/54)) |
 | NFC, 125 kHz RFID | ❌ absent, as on a board without them | |
-| Speed | 🟡 half to full real time on an Apple M-series Mac, slower on smaller computers: each emulator runs on one core. kodeOS stands still for a few seconds as it boots, while the P4 talks to the C5. Settings shows the speed | [esp-emulator#53](https://github.com/espressif/esp-emulator/issues/53), [esp-emulator#70](https://github.com/espressif/esp-emulator/issues/70) |
+| Speed | 🟡 kodeOS boots and runs in real time on an Apple M-series Mac; heavy apps and smaller computers go slower, since each emulator runs on one core. Settings shows the speed | [esp-emulator#53](https://github.com/espressif/esp-emulator/issues/53) |
 
 ✅ works · 🟡 works, through a stand-in or with limits · ❌ not yet
 
-**What is planned.** The USB port leaves kemu when esp-emu has a host on a socket ([esp-emulator#51](https://github.com/espressif/esp-emulator/issues/51)); then kemu is empty. The [roadmap](docs/ROADMAP.md) has the details and the open requests to Espressif.
+**What is planned.** esp-emu 1.3.0 has a USB host over co-simulation ([esp-emulator#51](https://github.com/espressif/esp-emulator/issues/51)): the USB port's computer moves there, and then kemu is empty. The [roadmap](docs/ROADMAP.md) has the details and the open requests to Espressif.
 
 ## Install
 
@@ -85,7 +85,7 @@ ln -sf "$PWD/target/release/kode-sim" ~/.local/bin/kode-sim
 ```
 
 - Keep the folder where it is: kode-sim uses its `web/` and `firmware/`.
-- On its first run, kode-sim installs esp-emu 1.2.0 with Espressif's installer, and builds the C5's firmware with your ESP-IDF, both in its own cache.
+- On its first run, kode-sim installs esp-emu 1.3.0 with Espressif's installer, and builds the C5's firmware with your ESP-IDF, both in its own cache.
 - On Linux, install `mtools` too: kode-sim uses it to make the microSD image.
 
 ## Use

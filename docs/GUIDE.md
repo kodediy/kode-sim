@@ -76,8 +76,8 @@ configures nor solves its dependencies again.
    The binary uses the page (`web/`) and kemu (`firmware/`) of the checkout
    it was built from, so keep the checkout where it is
    (`$KODE_SIM_WEB` and `$KODE_SIM_FIRMWARE` point elsewhere).
-3. `esp-emu` **1.2.0** - installed by kode-sim on its first run, with
-   Espressif's installer, into `~/Library/Caches/kode-sim/esp-emu-1.2.0`
+3. `esp-emu` **1.3.0** - installed by kode-sim on its first run, with
+   Espressif's installer, into `~/Library/Caches/kode-sim/esp-emu-1.3.0`
    (`$KODE_SIM_TOOLS` moves that folder; an `esp-emu` on PATH is left alone;
    `KODE_SIM_ESP_EMU` names another binary to run instead). Beside it, on the
    first run too, the C5's firmware: kode_slave_c5, fetched from GitHub and
@@ -413,7 +413,7 @@ endpoints yet (so the Webcam's video is not shown), and tinyusb's own
 | ESP32-C5: BLE | ~ it comes up and advertises; nothing on the Mac connects to it yet |
 | The C5's infrared, its 32 kHz crystal | ✗ |
 | JPEG and PPA | ~ esp-emu's (not decoding to YUV); not yet tried by kode-sim's tests |
-| Light sleep | ✗ not in esp-emu 1.2.0 |
+| Light sleep | ✗ not in esp-emu 1.3.0 |
 | IMU (QMI8658A), magnetometer (QMC5883P) | ✓ the page poses the board (pitch, roll, heading), shakes it and brings a magnet near; the chips answer in the scales the driver asked for (below) |
 | NFC, 125 kHz RFID | ✗ absent |
 | Console (USB-Serial/JTAG) | ✓ the terminal, the page and a serial port for kcli.py |

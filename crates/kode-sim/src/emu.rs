@@ -32,7 +32,7 @@ use crate::proto;
 /// the ESP-Hosted slave. Kept in
 /// kode-sim's tools folder, so an esp-emu on PATH (another version,
 /// someone else's) is left be.
-pub const ESP_EMU_VERSION: &str = "1.2.0";
+pub const ESP_EMU_VERSION: &str = "1.3.0";
 const INSTALLER: &str = "https://raw.githubusercontent.com/espressif/esp-emulator/main/install.sh";
 /// The Kode Dot's PSRAM: 32 MB on the board, 16 MB if esp-emu is left to its default.
 const PSRAM: &str = "32M";

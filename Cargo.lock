@@ -257,7 +257,7 @@ checksum = "be95d4a884358a21a199689323c29e9256b4a1b315e22f183d155422041d3a9a"
 
 [[package]]
 name = "cosim"
-version = "0.3.1"
+version = "0.4.0"
 
 [[package]]
 name = "cpufeatures"
@@ -579,7 +579,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "kode-emu"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -601,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "kodedot-chips"
-version = "0.3.1"
+version = "0.4.0"
 
 [[package]]
 name = "libc"

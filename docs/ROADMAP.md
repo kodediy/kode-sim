@@ -36,8 +36,8 @@ is the console over UART1 and the RTC's time.
 - **0.3.0 - the board's own binaries.** The screen, the microSD and the C5
   leave kemu on esp-emu 1.1.0.
 - **0.3.1 - esp-emu 1.2.0**, the window in English and its speed readout.
-- **0.3.2 - esp-emu 1.3.0** (this release): no stall at the boot, and
-  faster.
+- **0.4.0 - kode-emu, esp-emu 1.3.0** (this release): no stall at the boot,
+  faster, and the USB-C port in esp-emu for every binary.
 - **1.0.0 - no kemu.** The USB port's computer left kemu with esp-emu
   1.3.0. The console and the clock are what is left: then `--board` is the
   only build.

@@ -4,10 +4,13 @@ What changes from one kode-emu release to the next. The versions follow
 [SemVer](https://semver.org): until 1.0 a minor release (0.2, 0.3…) may
 change how kode-emu is used, and says so here.
 
-## [Unreleased]
+## [0.4.0] - 2026-11-28
 
 kode-sim is now **kode-emu**: it runs the Kode Dot's own firmware,
-instruction by instruction, so it is an emulator.
+instruction by instruction, so it is an emulator. It moves to esp-emu 1.3.0,
+which ends the boot's stall and puts the USB-C port in esp-emu: a binary
+built for the board has USB now, and kemu holds only the console and the
+clock.
 
 ### Added
 
@@ -23,6 +26,10 @@ instruction by instruction, so it is an emulator.
   - kodeOS's own dock console, a CDC-ACM device that kemu used to refuse, is
     enumerated.
   - kemu holds only the console and the clock now.
+- **Keyboards and mice are read from their HID report descriptors** (#21,
+  by Subzero710): Report IDs, composite devices, keyboard and mouse on one
+  interface, the pointer's moves, buttons and wheel. A device that sends an
+  odd field keeps the rest of its report.
 
 ### Changed
 
@@ -45,6 +52,9 @@ instruction by instruction, so it is an emulator.
 
 ### Fixed
 
+- **The tests' fake esp-emu opens its control and chips sockets before it
+  announces UART1, and kode-emu reserves its three ports together** (#19,
+  by Subzero710): a flaky start-up on Linux.
 - **The radio test app mounts its card.** Since kode-sdk's #313 an app's
   microSD is mounted when it is first used, not when the C5's link comes
   up: the test app mounts it, and the test checks that the card mounts with
@@ -54,9 +64,12 @@ instruction by instruction, so it is an emulator.
 
 - **Console input that arrives while kodeOS brings its C5 link up is
   damaged** (#22): an install or a `file_put` in the first seconds after
-  the boot fails with "CRC mismatch". It is not new in esp-emu 1.3.0, but
-  `kode-emu review` installs sooner on it and meets it: its emulator test
-  is marked as a known failure until #22 is understood.
+  the boot fails with "CRC mismatch". kemu delivers every byte intact: the
+  bytes go wrong in kode-sdk's console, at its switch from line mode to raw
+  mode while other parts log a lot, so a board may do the same. It is not
+  new in esp-emu 1.3.0, but `kode-emu review` installs sooner on it and
+  meets it: its emulator test is marked as a known failure until #22 is
+  fixed.
 
 ## [0.3.1] - 2026-11-22
 

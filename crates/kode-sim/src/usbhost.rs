@@ -11,16 +11,17 @@
 //!   PREVENT/ALLOW and START STOP UNIT (the eject) - and its FAT volume
 //!   mounted over those blocks, so that a file can be listed, copied in and
 //!   read back through the app's own `tud_msc_*` callbacks and the card;
-//! - a **keyboard** (BadUSB): the HID class descriptors and SET_IDLE, then
-//!   every 8-byte boot report it sends, turned into the characters a
-//!   computer with a US or a Spanish layout would type.
+//! - **HID keyboards and mice**: every active HID interface's Report
+//!   descriptor determines its input layouts, usages and Report IDs.
+//!   Keyboard usages retain the US and Spanish text translation; mouse
+//!   buttons, relative motion and absolute axes remain entirely virtual.
 //!
 //! The wire is kemu_proto.h's USB_* frames. Everything here runs on one
 //! thread of its own, which owns the state and blocks on the frames it
 //! waits for; the bridge hands it frames and commands through a channel and
 //! takes JSON snapshots back (`{"usb": {...}}`), for the page.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
@@ -28,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::proto;
+use crate::{hid, proto, usbconfig};
 
 /// USB_BUS kinds.
 pub const BUS_CABLE_OUT: u8 = 0;
@@ -37,6 +38,10 @@ pub const BUS_CABLE_IN: u8 = 1;
 pub const DEV_PULLUP: u8 = 1;
 pub const DEV_STALL: u8 = 2;
 pub const DEV_CLEAR: u8 = 3;
+/// The stack opened an endpoint (kemu_usbdcd.h).
+pub const DEV_EP_OPEN: u8 = 4;
+/// The stack closed an endpoint, or all endpoints (0xff).
+pub const DEV_EP_CLOSE: u8 = 6;
 /// The firmware's OUT endpoint queue, in bytes, per endpoint (KEMU_USB_CREDIT).
 const CREDIT: u32 = 8192;
 /// The biggest OUT chunk: kemu's frame buffer is 8 KB.
@@ -228,12 +233,82 @@ struct DeviceInfo {
     manufacturer: String,
     product: String,
     ep0_mps: usize,
-    /// The first interface's class, subclass, protocol.
+    /// The selected bulk-only MSC interface, for the existing disk driver.
     iface: (u8, u8, u8),
     ep_in: u8,
     ep_out: u8,
     intf: u8,
-    report_len: usize,
+    configuration: u8,
+    interfaces: Vec<usbconfig::Interface>,
+    interface_errors: BTreeMap<u8, String>,
+}
+
+struct HidInterface {
+    layout: Option<HidLayout>,
+    error: String,
+}
+
+enum HidLayout {
+    Report(hid::Descriptor),
+    Boot(hid::Boot),
+}
+
+impl HidLayout {
+    fn keyboard(&self) -> bool {
+        match self {
+            Self::Report(descriptor) => descriptor.keyboard(),
+            Self::Boot(kind) => matches!(kind, hid::Boot::Keyboard),
+        }
+    }
+
+    fn mouse(&self) -> bool {
+        match self {
+            Self::Report(descriptor) => descriptor.mouse(),
+            Self::Boot(kind) => matches!(kind, hid::Boot::Mouse),
+        }
+    }
+
+    fn buttons(&self) -> Vec<u16> {
+        match self {
+            Self::Report(descriptor) => descriptor.buttons(),
+            Self::Boot(hid::Boot::Mouse) => vec![1, 2, 3],
+            Self::Boot(hid::Boot::Keyboard) => vec![],
+        }
+    }
+
+    fn reports(&self) -> Vec<(Option<u8>, usize)> {
+        match self {
+            Self::Report(descriptor) => descriptor.report_lengths(hid::ReportKind::Input),
+            Self::Boot(hid::Boot::Keyboard) => vec![(None, 8)],
+            Self::Boot(hid::Boot::Mouse) => vec![(None, 3)],
+        }
+    }
+
+    fn protocol(&self) -> &'static str {
+        match self {
+            Self::Report(_) => "report",
+            Self::Boot(_) => "boot",
+        }
+    }
+
+    fn input(&self, report: &[u8]) -> Result<hid::Input, hid::Error> {
+        match self {
+            Self::Report(descriptor) => descriptor.input(report),
+            Self::Boot(kind) => kind.input(report),
+        }
+    }
+}
+
+/// State belongs to an endpoint, interface, Report ID and application collection.
+type HidSource = (u8, u8, Option<u8>, usize);
+
+#[derive(Clone, PartialEq, Eq)]
+struct HidState {
+    input: hid::InputCollection,
+    totals: BTreeMap<u16, i64>,
+    presses: BTreeMap<u16, u64>,
+    releases: BTreeMap<u16, u64>,
+    sequence: u64,
 }
 
 #[derive(Default, Clone)]
@@ -264,6 +339,8 @@ enum Stage {
     Enumerating,
     Mounted,
     Keyboard,
+    Mouse,
+    Hid,
     Ejected,
     Failed,
 }
@@ -276,6 +353,8 @@ impl Stage {
             Stage::Enumerating => "enumerating",
             Stage::Mounted => "mounted",
             Stage::Keyboard => "keyboard",
+            Stage::Mouse => "mouse",
+            Stage::Hid => "hid",
             Stage::Ejected => "ejected",
             Stage::Failed => "failed",
         }
@@ -314,9 +393,13 @@ struct Host {
     last: String,
     layout: String,
     typed: String,
-    keys_down: Vec<u8>,
+    hid: BTreeMap<u8, HidInterface>,
+    hid_states: BTreeMap<HidSource, HidState>,
+    pending_hid: VecDeque<(u8, Vec<u8>)>,
+    /// A closed endpoint must not decode reports from a previous TinyUSB instance.
+    closed_hid_endpoints: BTreeSet<u8>,
     /// A dead key (the Spanish layout's acute or diaeresis) waiting for its letter.
-    dead: Option<char>,
+    dead: BTreeMap<(u8, usize), char>,
     tag: u32,
     /// When the last snapshot went out.
     published: Option<Instant>,
@@ -351,8 +434,11 @@ impl Host {
             last: String::new(),
             layout: "es".into(),
             typed: String::new(),
-            keys_down: vec![],
-            dead: None,
+            hid: BTreeMap::new(),
+            hid_states: BTreeMap::new(),
+            pending_hid: VecDeque::new(),
+            closed_hid_endpoints: BTreeSet::new(),
+            dead: BTreeMap::new(),
             tag: 0,
             published: None,
             owed: false,
@@ -391,9 +477,22 @@ impl Host {
             Ev::In(ep, data) => {
                 if ep == 0x80 {
                     self.ctl.push_back(data);
-                } else if self.dev.iface.0 == 0x03 && ep == self.dev.ep_in {
-                    self.report(&data);
-                } else {
+                } else if !self.cable || !self.pullup {
+                    // No endpoint from the previous attachment is still valid.
+                } else if self.closed_hid_endpoints.contains(&ep) {
+                    // The DCD closed this endpoint. Wait for its next EP_OPEN event.
+                } else if let Some(number) = self.hid_interface(ep) {
+                    if self.stage == Stage::Enumerating {
+                        let queued: usize = self.pending_hid.iter().map(|(_, d)| d.len().max(1)).sum();
+                        if queued + data.len().max(1) <= usize::from(u16::MAX) {
+                            self.pending_hid.push_back((ep, data));
+                        } else {
+                            self.say("HID reports exceed the USB transfer buffer during enumeration".into());
+                        }
+                    } else {
+                        self.report(number, ep, &data);
+                    }
+                } else if ep == self.dev.ep_in && self.dev.iface.0 == usbconfig::CLASS_MSC {
                     self.ins.entry(ep).or_default().push_back(data);
                 }
             }
@@ -418,6 +517,29 @@ impl Host {
                 }
             }
             Ev::Dev(DEV_CLEAR, ep) => self.stalled.retain(|e| *e != ep),
+            Ev::Dev(DEV_EP_OPEN, ep) => {
+                self.closed_hid_endpoints.remove(&ep);
+            }
+            Ev::Dev(DEV_EP_CLOSE, ep) => {
+                if ep == 0xff {
+                    self.closed_hid_endpoints.extend(
+                        self.dev
+                            .interfaces
+                            .iter()
+                            .filter(|i| i.alternate == 0 && i.class.0 == usbconfig::CLASS_HID)
+                            .flat_map(|i| i.endpoints.iter().filter(|e| e.input()).map(|e| e.address)),
+                    );
+                } else {
+                    self.closed_hid_endpoints.insert(ep);
+                }
+                self.hid_states.retain(|(_, source_ep, _, _), _| ep != 0xff && *source_ep != ep);
+                self.dead.retain(|(interface, collection), _| {
+                    self.hid_states.keys().any(|(i, _, _, c)| i == interface && c == collection)
+                });
+                self.pending_hid.retain(|(source_ep, _)| ep != 0xff && *source_ep != ep);
+                self.ins.retain(|source_ep, _| ep != 0xff && *source_ep != ep);
+                self.publish(true);
+            }
             Ev::Dev(..) => {}
             Ev::Cmd(c) => self.cmds.push_back(c),
             Ev::Rebooted => {
@@ -438,7 +560,10 @@ impl Host {
         // After an eject the device leaves the bus: that is the eject being done,
         // and the page keeps saying so until the device comes back.
         let ejected = self.stage == Stage::Ejected && self.cable;
-        if matches!(self.stage, Stage::Enumerating | Stage::Mounted | Stage::Keyboard | Stage::Failed) {
+        if matches!(
+            self.stage,
+            Stage::Enumerating | Stage::Mounted | Stage::Keyboard | Stage::Mouse | Stage::Hid | Stage::Failed
+        ) {
             self.say(format!("{why}: the computer lets go of the device"));
         }
         self.stage = if ejected {
@@ -455,7 +580,11 @@ impl Host {
         self.ctl.clear();
         self.credit.clear();
         self.stalled.clear();
-        self.keys_down.clear();
+        self.hid.clear();
+        self.hid_states.clear();
+        self.pending_hid.clear();
+        self.closed_hid_endpoints.clear();
+        self.dead.clear();
         self.error.clear();
         self.publish(true);
     }
@@ -488,7 +617,11 @@ impl Host {
                     self.ins.clear();
                     self.ctl.clear();
                     self.credit.clear();
-                    self.keys_down.clear();
+                    self.hid.clear();
+                    self.hid_states.clear();
+                    self.pending_hid.clear();
+                    self.closed_hid_endpoints.clear();
+                    self.dead.clear();
                     self.error.clear();
                     self.publish(true);
                 }
@@ -531,6 +664,19 @@ impl Host {
     }
 
     fn snapshot(&self) -> Value {
+        let (keyboard, mouse) = self.capabilities();
+        let mut keys = BTreeSet::new();
+        let mut modifiers = 0;
+        let mut buttons = BTreeSet::new();
+        for state in self.hid_states.values() {
+            if let Some(k) = &state.input.keyboard {
+                keys.extend(k.keys.iter().copied());
+                modifiers |= k.modifiers;
+            }
+            if let Some(m) = &state.input.mouse {
+                buttons.extend(m.buttons.iter().copied());
+            }
+        }
         let mut j = json!({
             "cable": self.cable,
             "stage": self.stage.name(),
@@ -542,12 +688,53 @@ impl Host {
             "last": self.last,
             "layout": self.layout,
             "typed": self.typed,
+            "keys_down": keys,
+            "modifiers": modifiers,
+            "mouse": {"buttons": buttons},
+            "configuration": self.dev.configuration,
+            // The page labels HID sources by interface, interrupt endpoint and report ID.
+            "interfaces": self.dev.interfaces.iter().map(|i| {
+                let driver = (i.alternate == 0).then(|| self.hid.get(&i.number)).flatten();
+                let layout = driver.and_then(|h| h.layout.as_ref());
+                json!({
+                    "number": i.number, "alternate": i.alternate, "active": i.alternate == 0,
+                    "class": i.class.0,
+                    "endpoints": i.endpoints.iter().map(|e| json!({
+                        "address": e.address, "direction": if e.input() {"in"} else {"out"},
+                        "transfer_type": e.transfer(),
+                    })).collect::<Vec<_>>(),
+                    "report_length": i.report_length,
+                    "keyboard": layout.is_some_and(HidLayout::keyboard),
+                    "mouse": layout.is_some_and(HidLayout::mouse),
+                    "buttons": layout.map(HidLayout::buttons).unwrap_or_default(),
+                    "hid_protocol": layout.map(HidLayout::protocol),
+                    "error": driver.map(|h| h.error.as_str()).or_else(|| self.dev.interface_errors.get(&i.number).map(String::as_str)).unwrap_or(""),
+                    "reports": layout.map(HidLayout::reports).unwrap_or_default()
+                        .iter().map(|(id, length)| json!({"report_id":id,"length":length})).collect::<Vec<_>>(),
+                })
+            }).collect::<Vec<_>>(),
+            "hid": {
+                "keyboard": keyboard, "mouse": mouse,
+                "reports": self.hid_states.iter().map(|((interface, endpoint, report_id, collection), state)| {
+                    json!({
+                        "interface": interface, "endpoint": endpoint, "report_id": report_id, "collection": collection,
+                        "keys_down": state.input.keyboard.as_ref().map(|k| &k.keys),
+                        "modifiers": state.input.keyboard.as_ref().map(|k| k.modifiers),
+                        "mouse": state.input.mouse.as_ref().map(|m| json!({
+                            "buttons": m.buttons, "relative": axes_json(&m.relative), "absolute": axes_json(&m.absolute),
+                            // Cumulative values preserve motion and clicks between snapshots.
+                            "total": axes_json(&state.totals), "sequence": state.sequence,
+                            "presses": state.presses, "releases": state.releases,
+                        })),
+                    })
+                }).collect::<Vec<_>>(),
+            },
         });
         if self.dev.vid != 0 || self.dev.pid != 0 {
             j["device"] = json!({
                 "vid": format!("{:04x}", self.dev.vid), "pid": format!("{:04x}", self.dev.pid),
                 "manufacturer": self.dev.manufacturer, "product": self.dev.product,
-                "class": class_name(self.dev.iface),
+                "class": self.device_class(),
             });
         }
         if self.disk.blocks != 0 {
@@ -560,6 +747,37 @@ impl Host {
             });
         }
         json!({ "usb": j })
+    }
+
+    fn capabilities(&self) -> (bool, bool) {
+        let layouts = || self.hid.values().filter_map(|h| h.layout.as_ref());
+        (layouts().any(HidLayout::keyboard), layouts().any(HidLayout::mouse))
+    }
+
+    fn device_class(&self) -> &'static str {
+        if self.dev.interfaces.iter().filter(|i| i.alternate == 0).count() > 1 || self.capabilities() == (true, true) {
+            "composite"
+        } else {
+            match self.capabilities() {
+                (true, false) => "keyboard",
+                (false, true) => "mouse",
+                _ => class_name(self.dev.iface),
+            }
+        }
+    }
+
+    fn hid_interface(&self, endpoint: u8) -> Option<u8> {
+        self.dev
+            .interfaces
+            .iter()
+            .find(|i| {
+                i.alternate == 0
+                    && i.class.0 == usbconfig::CLASS_HID
+                    && i.endpoints
+                        .iter()
+                        .any(|e| e.address == endpoint && e.input() && e.transfer() == usbconfig::TRANSFER_INTERRUPT)
+            })
+            .map(|i| i.number)
     }
 
     /// A snapshot to every page; thinned to five a second unless `now`.
@@ -626,6 +844,9 @@ impl Host {
             }
             let mut done = false;
             while let Some(f) = self.ctl.pop_front() {
+                if f.len() > mps || f.len() > w_length.saturating_sub(got.len()) {
+                    return Err(UsbErr::Protocol("control data exceeds its packet size or requested length".into()));
+                }
                 done = f.len() < mps;
                 got.extend_from_slice(&f);
                 if done || got.len() >= w_length {
@@ -634,7 +855,6 @@ impl Host {
                 }
             }
             if done {
-                got.truncate(w_length);
                 (self.wire)(proto::USB_OUT, &[0]);
                 return Ok(got);
             }
@@ -672,8 +892,12 @@ impl Host {
                 self.stalled.retain(|e| *e & 0x7f != 0);
                 return Err(UsbErr::Stall(0));
             }
-            if self.ctl.pop_front().is_some() {
-                return Ok(());
+            if let Some(status) = self.ctl.pop_front() {
+                return if status.is_empty() {
+                    Ok(())
+                } else {
+                    Err(UsbErr::Protocol("nonempty USB control status stage".into()))
+                };
             }
             self.pump(deadline).map_err(|e| {
                 if matches!(e, UsbErr::Timeout(_)) {
@@ -801,14 +1025,19 @@ impl Host {
     }
 
     fn enumerate_inner(&mut self) -> Result<(), UsbErr> {
+        let head = self.get_descriptor(1, 0, 0, 8)?;
+        if head.len() != 8 || head[0] != 18 || head[1] != 1 || !matches!(head[7], 8 | 16 | 32 | 64) {
+            return Err(UsbErr::Protocol("invalid device descriptor or endpoint-zero packet size".into()));
+        }
+        self.dev.ep0_mps = usize::from(head[7]);
         let d = self.get_descriptor(1, 0, 0, 18)?;
-        if d.len() < 18 {
-            return Err(UsbErr::Protocol(format!("a device descriptor of {} bytes", d.len())));
+        if d.len() != 18 || d[..8] != head || d[17] == 0 {
+            return Err(UsbErr::Protocol("invalid or inconsistent USB device descriptor".into()));
         }
         self.dev = DeviceInfo {
             vid: u16::from_le_bytes([d[8], d[9]]),
             pid: u16::from_le_bytes([d[10], d[11]]),
-            ep0_mps: d[7] as usize,
+            ep0_mps: usize::from(d[7]),
             ..DeviceInfo::default()
         };
         self.say(format!("GET_DESCRIPTOR device: {:04x}:{:04x}, class {:#04x}", self.dev.vid, self.dev.pid, d[4]));
@@ -818,126 +1047,326 @@ impl Host {
         self.dev.product = self.get_string(d[15]);
         self.say(format!("strings: {:?} {:?}", self.dev.manufacturer, self.dev.product));
         let head = self.get_descriptor(2, 0, 0, 9)?;
-        if head.len() < 9 {
-            return Err(UsbErr::Protocol("a configuration descriptor shorter than 9 bytes".into()));
+        if head.len() != 9 || head[0] != 9 || head[1] != 2 {
+            return Err(UsbErr::Protocol("invalid configuration descriptor header".into()));
         }
-        let total = u16::from_le_bytes([head[2], head[3]]).min(512);
+        let total = u16::from_le_bytes([head[2], head[3]]);
+        if total < 9 {
+            return Err(UsbErr::Protocol("invalid wTotalLength".into()));
+        }
         let cfg = self.get_descriptor(2, 0, 0, total)?;
-        self.parse_config(&cfg);
-        self.control_write([0x00, 9, head[5], 0, 0, 0, 0, 0], &[])?;
+        if cfg.get(..9) != Some(head.as_slice()) {
+            return Err(UsbErr::Protocol("configuration header changed during enumeration".into()));
+        }
+        self.parse_config(&cfg)?;
+        self.control_write([0x00, 9, self.dev.configuration, 0, 0, 0, 0, 0], &[])?;
         self.say(format!(
-            "SET_CONFIGURATION {}: interface {:?}, endpoints in {:#04x} out {:#04x}",
-            head[5], self.dev.iface, self.dev.ep_in, self.dev.ep_out
+            "SET_CONFIGURATION {}: interfaces {:?}, endpoints {:?}",
+            self.dev.configuration,
+            self.dev.interfaces.iter().map(|i| (i.number, i.alternate, i.class)).collect::<Vec<_>>(),
+            self.dev
+                .interfaces
+                .iter()
+                .filter(|i| i.alternate == 0)
+                .flat_map(|i| i.endpoints.iter())
+                .map(|e| format!("{:#04x}", e.address))
+                .collect::<Vec<_>>()
         ));
-        match self.dev.iface {
-            (0x08, _, 0x50) => self.mount(),
-            (0x03, _, _) => self.keyboard(),
-            (c, s, p) => {
-                self.say(format!(
-                    "a device the computer has no driver for (class {c:#04x}/{s:#04x}/{p:#04x}): it stays plugged in"
-                ));
-                self.stage = Stage::Mounted;
-                Ok(())
+        let mut interfaces: Vec<_> = self.dev.interfaces.iter().filter(|i| i.alternate == 0).cloned().collect();
+        interfaces.sort_by_key(|i| i.number);
+        for interface in &interfaces {
+            if interface.class.0 != usbconfig::CLASS_HID {
+                continue;
             }
-        }
-    }
-
-    fn parse_config(&mut self, cfg: &[u8]) {
-        let mut i = 0;
-        let mut first = true;
-        while i + 2 <= cfg.len() {
-            let len = cfg[i] as usize;
-            if len < 2 || i + len > cfg.len() {
-                break;
-            }
-            match cfg[i + 1] {
-                4 if len >= 9 && first => {
-                    first = false;
-                    self.dev.intf = cfg[i + 2];
-                    self.dev.iface = (cfg[i + 5], cfg[i + 6], cfg[i + 7]);
+            let result = self.init_hid(interface);
+            match result {
+                Ok(layout) => {
+                    self.hid.insert(interface.number, HidInterface { layout: Some(layout), error: String::new() });
                 }
-                5 if len >= 7 && !first => {
-                    let a = cfg[i + 2];
-                    if a & 0x80 != 0 && self.dev.ep_in == 0 {
-                        self.dev.ep_in = a;
-                    } else if a & 0x80 == 0 && self.dev.ep_out == 0 {
-                        self.dev.ep_out = a;
-                    }
+                Err(UsbErr::Detached) => return Err(UsbErr::Detached),
+                Err(e) => {
+                    self.say(format!("HID interface {} unavailable: {e}", interface.number));
+                    self.hid.insert(interface.number, HidInterface { layout: None, error: e.to_string() });
                 }
-                0x21 if len >= 9 => self.dev.report_len = u16::from_le_bytes([cfg[i + 7], cfg[i + 8]]) as usize,
-                _ => {}
             }
-            i += len;
         }
-    }
-
-    // ---- a keyboard ----
-
-    fn keyboard(&mut self) -> Result<(), UsbErr> {
-        let intf = self.dev.intf;
-        if self.dev.report_len > 0 {
-            let r = self.control(
-                [0x81, 6, 0, 0x22, intf, 0, self.dev.report_len as u8, (self.dev.report_len >> 8) as u8],
-                &[],
-            )?;
-            self.say(format!("GET_DESCRIPTOR HID report: {} bytes", r.len()));
+        let capabilities = self.capabilities();
+        let storage = self.dev.iface.0 == usbconfig::CLASS_MSC && self.dev.ep_in != 0 && self.dev.ep_out != 0;
+        self.stage = match capabilities {
+            (true, true) => Stage::Hid,
+            (true, false) => Stage::Keyboard,
+            (false, true) => Stage::Mouse,
+            (false, false) if storage => Stage::Enumerating,
+            _ => Stage::Mounted,
+        };
+        let pending = std::mem::take(&mut self.pending_hid);
+        for (ep, data) in pending {
+            if let Some(number) = self.hid_interface(ep) {
+                self.report(number, ep, &data);
+            }
         }
-        // SET_IDLE(0): report only when something changes.
-        match self.control_write([0x21, 0x0A, 0, 0, intf, 0, 0, 0], &[]) {
-            Ok(()) | Err(UsbErr::Stall(_)) => {}
-            Err(e) => return Err(e),
+        if storage {
+            if let Err(e) = self.mount() {
+                if capabilities == (false, false) || e == UsbErr::Detached {
+                    return Err(e);
+                }
+                self.error = format!("MSC interface {}: {e}", self.dev.intf);
+                self.say(self.error.clone());
+            }
+        } else if capabilities == (false, false) {
+            self.say("no driver for the active USB interfaces; the device stays plugged in".into());
         }
-        self.say(format!("a keyboard: what it types appears here (layout {})", self.layout));
-        self.stage = Stage::Keyboard;
         Ok(())
     }
 
-    /// An 8-byte boot report: modifiers, reserved, up to six keys.
-    fn report(&mut self, r: &[u8]) {
-        if r.len() < 3 {
-            return;
+    fn parse_config(&mut self, bytes: &[u8]) -> Result<(), UsbErr> {
+        let configuration = usbconfig::Configuration::parse(bytes).map_err(UsbErr::Protocol)?;
+        self.dev.configuration = configuration.value;
+        self.dev.interfaces = configuration.interfaces;
+        let mut storage: Vec<_> = self
+            .dev
+            .interfaces
+            .iter()
+            .filter(|i| i.alternate == 0 && i.class == (usbconfig::CLASS_MSC, 6, 0x50))
+            .cloned()
+            .collect();
+        storage.sort_by_key(|i| i.number);
+        for interface in self.dev.interfaces.iter().filter(|i| {
+            i.alternate == 0 && i.class.0 != usbconfig::CLASS_HID && i.class != (usbconfig::CLASS_MSC, 6, 0x50)
+        }) {
+            self.dev
+                .interface_errors
+                .insert(interface.number, format!("unsupported USB interface class {:?}", interface.class));
         }
-        // Reports of a keyboard that shares its interface with a mouse start with the report id.
-        let r = if r.len() == 9 && r[0] == 1 { &r[1..] } else { r };
-        let m = r[0];
-        let down: Vec<u8> = r[2..].iter().copied().filter(|k| *k > 3).collect();
-        for k in &down {
-            if !self.keys_down.contains(k) {
-                let key = key_char(&self.layout, m, *k);
-                // The Spanish layout's ´ and ¨ do not print: they accent the next letter.
-                if let (Key::Char(c @ ('\u{b4}' | '\u{a8}')), "es") = (&key, self.layout.as_str()) {
-                    if let Some(prev) = self.dead.replace(*c) {
-                        self.typed.push(prev);
+        for interface in storage {
+            if self.dev.ep_in != 0 {
+                self.dev.interface_errors.insert(interface.number, "additional MSC volume is not mounted".into());
+                continue;
+            }
+            if interface.endpoints.iter().any(|e| !e.representable()) {
+                self.dev
+                    .interface_errors
+                    .insert(interface.number, "MSC endpoint cannot be represented by kemu's controller".into());
+                continue;
+            }
+            let endpoints = |input| {
+                interface
+                    .endpoints
+                    .iter()
+                    .filter(move |e| e.input() == input && e.transfer() == usbconfig::TRANSFER_BULK)
+            };
+            let input: Vec<_> = endpoints(true).collect();
+            let output: Vec<_> = endpoints(false).collect();
+            if input.len() != 1 || output.len() != 1 {
+                self.dev
+                    .interface_errors
+                    .insert(interface.number, "bulk-only MSC requires one bulk IN and one bulk OUT endpoint".into());
+                continue;
+            }
+            self.dev.intf = interface.number;
+            self.dev.iface = interface.class;
+            self.dev.ep_in = input[0].address;
+            self.dev.ep_out = output[0].address;
+        }
+        if self.dev.ep_in == 0 {
+            if let Some(interface) = self.dev.interfaces.iter().filter(|i| i.alternate == 0).min_by_key(|i| i.number) {
+                self.dev.iface = interface.class;
+            }
+        }
+        Ok(())
+    }
+
+    // ---- descriptor-driven HID ----
+
+    fn init_hid(&mut self, interface: &usbconfig::Interface) -> Result<HidLayout, UsbErr> {
+        if interface.endpoints.iter().any(|e| !e.representable()) {
+            return Err(UsbErr::Protocol("HID endpoint cannot be represented by kemu's controller".into()));
+        }
+        if !interface.endpoints.iter().any(|e| e.input() && e.transfer() == usbconfig::TRANSFER_INTERRUPT) {
+            return Err(UsbErr::Protocol("HID interface has no interrupt IN endpoint".into()));
+        }
+        let intf = interface.number;
+        let boot = match (interface.class.1, interface.class.2) {
+            (1, 1) => Some(hid::Boot::Keyboard),
+            (1, 2) => Some(hid::Boot::Mouse),
+            _ => None,
+        };
+        let layout = match self.hid_descriptor(interface) {
+            Ok(descriptor) => HidLayout::Report(descriptor),
+            Err(UsbErr::Detached) => return Err(UsbErr::Detached),
+            Err(error) => {
+                let Some(boot) = boot else { return Err(error) };
+                self.say(format!("HID interface {intf}: {error}; using its declared boot format"));
+                HidLayout::Boot(boot)
+            }
+        };
+        if boot.is_some() {
+            let protocol = u8::from(matches!(&layout, HidLayout::Report(_)));
+            // A stalled request leaves the power-on Report protocol selected.
+            // Devices with minimal boot interfaces may already speak the boot format.
+            match self.control_write([0x21, 0x0b, protocol, 0, intf, 0, 0, 0], &[]) {
+                Ok(()) | Err(UsbErr::Stall(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        match self.control_write([0x21, 0x0a, 0, 0, intf, 0, 0, 0], &[]) {
+            Ok(()) | Err(UsbErr::Stall(_)) => {}
+            Err(e) => return Err(e),
+        }
+        Ok(layout)
+    }
+
+    fn hid_descriptor(&mut self, interface: &usbconfig::Interface) -> Result<hid::Descriptor, UsbErr> {
+        let length =
+            interface.report_length.ok_or_else(|| UsbErr::Protocol("HID interface has no Report descriptor".into()))?;
+        let intf = interface.number;
+        let [lo, hi] = length.to_le_bytes();
+        let bytes = self.control([0x81, 6, 0, usbconfig::DESC_REPORT, intf, 0, lo, hi], &[])?;
+        self.say(format!("GET_DESCRIPTOR HID report: interface {intf}, {} bytes", bytes.len()));
+        let descriptor = hid::Descriptor::parse(&bytes).map_err(|e| UsbErr::Protocol(e.to_string()))?;
+        for diagnostic in &descriptor.diagnostics {
+            self.say(format!("HID interface {intf}: {diagnostic}"));
+        }
+        if !descriptor.keyboard() && !descriptor.mouse() {
+            return Err(UsbErr::Protocol("no supported HID keyboard or mouse input".into()));
+        }
+        Ok(descriptor)
+    }
+
+    fn report(&mut self, interface: u8, endpoint: u8, report: &[u8]) {
+        let Some(driver) = self.hid.get(&interface) else {
+            return;
+        };
+        let Some(layout) = &driver.layout else {
+            return;
+        };
+        let decoded = layout.input(report).and_then(|input| {
+            let mut updates = Vec::new();
+            for collection in input.collections {
+                let source = (interface, endpoint, input.report_id, collection.collection);
+                let previous = self.hid_states.get(&source);
+                let mut state = HidState {
+                    input: collection,
+                    totals: previous.map(|s| s.totals.clone()).unwrap_or_default(),
+                    presses: previous.map(|s| s.presses.clone()).unwrap_or_default(),
+                    releases: previous.map(|s| s.releases.clone()).unwrap_or_default(),
+                    sequence: previous.map_or(0, |s| s.sequence),
+                };
+                if let Some(mouse) = &state.input.mouse {
+                    let previous_mouse = previous.and_then(|s| s.input.mouse.as_ref());
+                    let event = mouse.relative.values().any(|delta| *delta != 0) || previous_mouse != Some(mouse);
+                    if event {
+                        state.sequence = state
+                            .sequence
+                            .checked_add(1)
+                            .ok_or_else(|| hid::Error("mouse event sequence overflow".into()))?;
                     }
-                    continue;
-                }
-                match key {
-                    Key::Char(c) => {
-                        if let Some(d) = self.dead.take() {
-                            match accent(d, c) {
-                                Some(a) => self.typed.push(a),
-                                None => {
-                                    self.typed.push(d);
-                                    self.typed.push(c);
-                                }
-                            }
-                        } else {
-                            self.typed.push(c);
+                    for (axis, delta) in &mouse.relative {
+                        let total = state.totals.entry(*axis).or_default();
+                        *total = total
+                            .checked_add(*delta)
+                            .ok_or_else(|| hid::Error("mouse motion total overflow".into()))?;
+                    }
+                    for button in &mouse.buttons {
+                        if !previous_mouse.is_some_and(|m| m.buttons.contains(button)) {
+                            count_button(&mut state.presses, *button)?;
                         }
                     }
-                    Key::Backspace => {
-                        self.typed.pop();
+                    if let Some(previous_mouse) = previous_mouse {
+                        for button in previous_mouse.buttons.difference(&mouse.buttons) {
+                            count_button(&mut state.releases, *button)?;
+                        }
                     }
-                    Key::None => {}
+                }
+                updates.push((source, state));
+            }
+            Ok(updates)
+        });
+        match decoded {
+            Err(e) => {
+                let error = format!("interface {interface}, endpoint {endpoint:#04x}: {e}");
+                if self.hid.get(&interface).is_some_and(|h| h.error != error) {
+                    self.hid.get_mut(&interface).expect("known interface").error = error.clone();
+                    self.say(error);
+                    self.publish(false);
+                }
+            }
+            Ok(updates) if updates.is_empty() => {}
+            Ok(updates) => {
+                let mut changed = self.hid.get(&interface).is_some_and(|h| !h.error.is_empty());
+                if let Some(h) = self.hid.get_mut(&interface) {
+                    h.error.clear();
+                }
+                // Install every collection only after the entire report validates.
+                let old: Vec<_> =
+                    updates.iter().map(|(source, _)| (*source, self.hid_states.get(source).cloned())).collect();
+                for (source, state) in &updates {
+                    changed |= self.hid_states.get(source) != Some(state);
+                    self.hid_states.insert(*source, state.clone());
+                }
+                for ((source, state), (_, previous)) in updates.iter().zip(old) {
+                    if let Some(keyboard) = &state.input.keyboard {
+                        let modifiers = self
+                            .hid_states
+                            .iter()
+                            .filter(|((i, _, _, c), _)| *i == interface && *c == source.3)
+                            .filter_map(|(_, s)| s.input.keyboard.as_ref())
+                            .fold(0, |m, k| m | k.modifiers);
+                        let previous_keys = previous.as_ref().and_then(|s| s.input.keyboard.as_ref());
+                        for key in &keyboard.keys {
+                            if !previous_keys.is_some_and(|k| k.keys.contains(key)) {
+                                self.type_key((interface, source.3), modifiers, *key);
+                            }
+                        }
+                    }
+                }
+                if changed {
+                    self.publish(false);
                 }
             }
         }
-        self.keys_down = down;
+    }
+
+    fn type_key(&mut self, source: (u8, usize), modifiers: u8, usage: u16) {
+        // Translation covers the existing layouts; wider usages remain observable.
+        let Ok(usage) = u8::try_from(usage) else {
+            return;
+        };
+        let key = key_char(&self.layout, modifiers, usage);
+        if let (Key::Char(c @ ('\u{b4}' | '\u{a8}')), "es") = (&key, self.layout.as_str()) {
+            if let Some(previous) = self.dead.insert(source, *c) {
+                self.typed.push(previous);
+            }
+            self.trim_typed();
+            return;
+        }
+        match key {
+            Key::Char(c) => {
+                if let Some(dead) = self.dead.remove(&source) {
+                    match accent(dead, c) {
+                        Some(a) => self.typed.push(a),
+                        None => {
+                            self.typed.push(dead);
+                            self.typed.push(c);
+                        }
+                    }
+                } else {
+                    self.typed.push(c);
+                }
+            }
+            Key::Backspace => {
+                self.typed.pop();
+            }
+            Key::None => {}
+        }
+        self.trim_typed();
+    }
+
+    fn trim_typed(&mut self) {
         while self.typed.len() > TYPED_KEPT {
             let cut = self.typed.char_indices().nth(1).map_or(self.typed.len(), |(i, _)| i);
             self.typed.drain(..cut);
         }
-        self.publish(false);
     }
 
     // ---- a disk ----
@@ -1214,6 +1643,26 @@ impl Host {
             Err(e) => Err(e),
         }
     }
+}
+
+fn axes_json(axes: &BTreeMap<u16, i64>) -> Value {
+    let mut value = json!({});
+    for (usage, axis) in axes {
+        let name = match *usage {
+            hid::USAGE_X => "x",
+            hid::USAGE_Y => "y",
+            hid::USAGE_WHEEL => "wheel",
+            _ => continue,
+        };
+        value[name] = json!(axis);
+    }
+    value
+}
+
+fn count_button(counts: &mut BTreeMap<u16, u64>, button: u16) -> Result<(), hid::Error> {
+    let count = counts.entry(button).or_default();
+    *count = count.checked_add(1).ok_or_else(|| hid::Error("mouse button transition counter overflow".into()))?;
+    Ok(())
 }
 
 /// A vowel under a dead key: ´ or ¨.
@@ -1707,6 +2156,9 @@ mod tests {
         cbw: Option<(u32, usize, bool, Vec<u8>)>,
         out: Vec<u8>,
         keyboard: bool,
+        protocol_stall: bool,
+        configuration: Option<Vec<u8>>,
+        reports: BTreeMap<u8, Vec<u8>>,
         flushed: u32,
     }
 
@@ -1719,9 +2171,10 @@ mod tests {
     }
 
     fn kbd_config() -> Vec<u8> {
+        let report_len = hid::test_support::keyboard().len() as u16;
         let mut c = vec![9, 2, 34, 0, 1, 1, 0, 0x80, 50];
         c.extend_from_slice(&[9, 4, 0, 0, 1, 3, 1, 1, 0]);
-        c.extend_from_slice(&[9, 0x21, 0x11, 1, 0, 1, 0x22, 63, 0]);
+        c.extend_from_slice(&[9, 0x21, 0x11, 1, 0, 1, 0x22, report_len as u8, (report_len >> 8) as u8]);
         c.extend_from_slice(&[7, 5, 0x81, 3, 8, 0, 10]);
         c
     }
@@ -1744,6 +2197,9 @@ mod tests {
                 cbw: None,
                 out: vec![],
                 keyboard: false,
+                protocol_stall: false,
+                configuration: None,
+                reports: BTreeMap::new(),
                 flushed: 0,
             }
         }
@@ -1786,13 +2242,29 @@ mod tests {
             let w = u16::from_le_bytes([s[6], s[7]]) as usize;
             let status = vec![(proto::USB_IN, vec![0x80])];
             match (s[0], s[1], s[3]) {
+                (0x21, 0x0b, _) if self.protocol_stall => vec![(proto::USB_DEV, vec![DEV_STALL, 0x80, 0, 0])],
                 (0x80, 6, 1) => {
                     let d = vec![18, 1, 0, 2, 0, 0, 0, 64, 0x6a, 0x30, 0x34, 0x12, 0, 1, 1, 2, 0, 1];
                     self.control_in(d, w)
                 }
-                (0x80, 6, 2) => self.control_in(if self.keyboard { kbd_config() } else { msc_config() }, w),
+                (0x80, 6, 2) => self.control_in(
+                    self.configuration
+                        .clone()
+                        .unwrap_or_else(|| if self.keyboard { kbd_config() } else { msc_config() }),
+                    w,
+                ),
                 (0x80, 6, 3) => self.control_in(string(if s[2] == 1 { "Kode" } else { "Kode Dot SD Reader" }), w),
-                (0x81, 6, 0x22) => self.control_in(vec![5, 1, 9, 6, 0xA1, 1, 0xC0], w),
+                (0x81, 6, 0x22) => {
+                    let report = if self.configuration.is_some() {
+                        self.reports.get(&s[4]).cloned()
+                    } else {
+                        (self.keyboard && s[4] == 0).then(hid::test_support::keyboard)
+                    };
+                    match report {
+                        Some(report) if s[2] == 0 && s[5] == 0 => self.control_in(report, w),
+                        _ => vec![(proto::USB_DEV, vec![DEV_STALL, 0x80, 0, 0])],
+                    }
+                }
                 (0xA1, 0xFE, _) => self.control_in(vec![0], w),
                 (0x00, ..) | (0x21, ..) | (0x02, ..) => status,
                 _ => vec![(proto::USB_DEV, vec![DEV_STALL, 0x80, 0, 0])],
@@ -2171,6 +2643,418 @@ mod tests {
         press(0, 44);
         let u = r.wait("the text", |u| u["typed"].as_str().is_some_and(|t| t.chars().count() >= 4));
         assert_eq!(u["typed"], "Qu\u{e9}\u{b4} ");
+    }
+
+    fn composite_fake(interfaces: &[(u8, u8, Vec<u8>)]) -> Fake {
+        let mut f = Fake::new(vec![]);
+        let mut cfg = vec![9, 2, 0, 0, interfaces.len() as u8, 1, 0, 0x80, 50];
+        for (number, endpoint, report) in interfaces {
+            let length = (report.len() as u16).to_le_bytes();
+            cfg.extend([9, 4, *number, 0, 1, 3, 0, 0, 0]);
+            cfg.extend([9, 0x21, 0x11, 1, 0, 1, 0x22, length[0], length[1]]);
+            cfg.extend([7, 5, *endpoint, 3, 64, 0, 1]);
+            f.reports.insert(*number, report.clone());
+        }
+        let length = (cfg.len() as u16).to_le_bytes();
+        cfg[2..4].copy_from_slice(&length);
+        f.configuration = Some(cfg);
+        f
+    }
+
+    #[test]
+    fn separate_hid_interfaces_route_interleaved_reports_and_reset_independently() {
+        let r = rig(composite_fake(&[(7, 0x86, hid::test_support::mouse()), (4, 0x83, hid::test_support::keyboard())]));
+        r.host.command(Cmd::Plug);
+        let u = r.stage("hid");
+        assert_eq!(u["device"]["class"], "composite");
+        assert_eq!(u["hid"]["keyboard"], true);
+        assert_eq!(u["hid"]["mouse"], true);
+        assert_eq!(u["interfaces"][0]["buttons"], json!([1, 2, 3, 4, 5]));
+        assert_eq!(u["interfaces"][1]["buttons"], json!([]));
+        assert_eq!(u["interfaces"][0]["number"], 7);
+        assert_eq!(u["interfaces"][0]["endpoints"][0]["address"], 0x86);
+        r.host.firmware_said(proto::USB_IN, &[0x83, 2, 0, 4, 0, 0, 0, 0, 0]);
+        r.host.firmware_said(proto::USB_IN, &[0x86, 5, 12, 254, 1]);
+        r.host.firmware_said(proto::USB_IN, &[0x83, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let u = r.wait("keyboard release and mouse delta", |u| {
+            u["typed"] == "A" && u["hid"]["reports"].as_array().is_some_and(|r| r.len() == 2)
+        });
+        assert_eq!(u["keys_down"], json!([]));
+        assert_eq!(u["modifiers"], 0);
+        assert_eq!(u["mouse"]["buttons"], json!([1, 3]));
+        assert_eq!(u["hid"]["reports"][1]["interface"], 7);
+        assert_eq!(u["hid"]["reports"][1]["mouse"]["total"], json!({"x":12,"y":-2,"wheel":1}));
+        r.host.firmware_said(proto::USB_IN, &[0x86, 0, 0, 0, 0]);
+        r.wait("mouse release", |u| u["mouse"]["buttons"] == json!([]));
+        r.host.rebooted();
+        let u = r.wait("enumeration after reboot", |u| u["stage"] == "hid" && u["hid"]["reports"] == json!([]));
+        assert_eq!(u["keys_down"], json!([]));
+        assert_eq!(u["mouse"]["buttons"], json!([]));
+        let wired = r.wired.lock().unwrap();
+        for number in [4, 7] {
+            assert!(wired
+                .iter()
+                .any(|(t, s)| *t == proto::USB_SETUP && s[0] == 0x81 && s[3] == 0x22 && s[4] == number));
+        }
+    }
+
+    #[test]
+    fn shared_endpoint_ignores_consumer_control_and_rollover_without_losing_held_keys() {
+        let mut report = hid::test_support::numbered(hid::test_support::keyboard(), 37);
+        report.extend(hid::test_support::numbered(hid::test_support::mouse(), 193));
+        report.extend(hid::test_support::hex("05 0c 09 01 a1 01 85 c2 09 e9 15 00 25 01 75 08 95 01 81 02 c0"));
+        let r = rig(composite_fake(&[(9, 0x84, report)]));
+        r.host.command(Cmd::Plug);
+        r.stage("hid");
+        r.host.firmware_said(proto::USB_IN, &[0x84, 37, 2, 0, 4, 0, 0, 0, 0, 0]);
+        r.host.firmware_said(proto::USB_IN, &[0x84, 193, 2, 1, 255, 1]);
+        let valid = r.wait("both supported report IDs", |u| u["typed"] == "A" && u["mouse"]["buttons"] == json!([2]));
+        r.host.firmware_said(proto::USB_IN, &[0x84, 194, 1]);
+        r.host.firmware_said(proto::USB_IN, &[0x84, 37, 0, 0, 1, 1, 1, 1, 1, 1]);
+        r.host.command(Cmd::Layout("us".into()));
+        let u = r.wait("consumer report and rollover processed", |u| u["layout"] == "us");
+        for field in ["hid", "keys_down", "modifiers", "mouse", "typed", "interfaces"] {
+            assert_eq!(u[field], valid[field], "{field}");
+        }
+        r.host.firmware_said(proto::USB_IN, &[0x84, 1, 0, 0, 5, 0, 0, 0, 0, 0]);
+        r.host.firmware_said(proto::USB_IN, &[0x84, 193, 0, 1]);
+        r.wait("invalid report diagnostic", |u| {
+            u["interfaces"][0]["error"].as_str().is_some_and(|s| s.contains("expected"))
+        });
+        r.host.firmware_said(proto::USB_IN, &[0x84, 193, 2, 1, 255, 1]);
+        let u = r.wait("repeated relative motion", |u| u["hid"]["reports"][1]["mouse"]["total"]["x"] == 2);
+        assert_eq!(u["typed"], "A");
+        assert_eq!(u["keys_down"], json!([4]));
+        r.host.command(Cmd::Unplug);
+        let u = r.stage("no_cable");
+        assert_eq!(u["hid"]["reports"], json!([]));
+        assert_eq!(u["modifiers"], 0);
+        assert_eq!(u["mouse"]["buttons"], json!([]));
+    }
+
+    #[test]
+    fn two_keyboards_with_the_same_report_id_do_not_share_held_keys_or_dead_keys() {
+        let report = hid::test_support::numbered(hid::test_support::keyboard(), 61);
+        let r = rig(composite_fake(&[(8, 0x82, report.clone()), (2, 0x85, report)]));
+        r.host.command(Cmd::Plug);
+        r.stage("keyboard");
+        for ep in [0x82, 0x85] {
+            r.host.firmware_said(proto::USB_IN, &[ep, 61, 0, 0, 4, 0, 0, 0, 0, 0]);
+        }
+        r.wait("independent presses", |u| u["typed"] == "aa");
+        r.host.firmware_said(proto::USB_IN, &[0x82, 61, 0, 0, 0, 0, 0, 0, 0, 0]);
+        r.host.firmware_said(proto::USB_IN, &[0x82, 61, 0, 0, 52, 0, 0, 0, 0, 0]);
+        r.host.firmware_said(proto::USB_IN, &[0x85, 61, 0, 0, 8, 0, 0, 0, 0, 0]);
+        r.host.firmware_said(proto::USB_IN, &[0x82, 61, 0, 0, 8, 0, 0, 0, 0, 0]);
+        r.wait("independent dead keys", |u| u["typed"] == "aaeé");
+        r.host.rebooted();
+        let u = r.wait("new boot enumerated with no held keys", |u| {
+            u["stage"] == "keyboard"
+                && u["hid"]["reports"] == json!([])
+                && u["log"].as_array().unwrap().iter().any(|l| l.as_str().unwrap().contains("restarted"))
+        });
+        assert_eq!(u["hid"]["reports"], json!([]));
+    }
+
+    #[test]
+    fn one_invalid_hid_interface_does_not_block_a_supported_interface() {
+        let r = rig(composite_fake(&[(5, 0x83, vec![0x05]), (7, 0x86, hid::test_support::mouse())]));
+        r.host.command(Cmd::Plug);
+        let u = r.stage("mouse");
+        assert_eq!(u["hid"]["keyboard"], false);
+        assert_eq!(u["hid"]["mouse"], true);
+        assert!(u["interfaces"][0]["error"].as_str().unwrap().contains("truncated"));
+        r.host.firmware_said(proto::USB_IN, &[0x86, 1, 1, 2, 3]);
+        r.wait("supported mouse still works", |u| u["mouse"]["buttons"] == json!([1]));
+    }
+
+    fn finish_config(config: &mut [u8], interfaces: u8) {
+        let length = (config.len() as u16).to_le_bytes();
+        config[2..4].copy_from_slice(&length);
+        config[4] = interfaces;
+    }
+
+    #[test]
+    fn unrelated_usb_interfaces_and_unsupported_msc_do_not_prevent_hid() {
+        let mut f = composite_fake(&[(5, 0x83, hid::test_support::mouse())]);
+        let cfg = f.configuration.as_mut().unwrap();
+        cfg.extend([9, 4, 2, 0, 1, 0xff, 0, 0, 0]);
+        cfg.extend([7, 5, 0x87, 3, 64, 0, 1]);
+        cfg.extend([9, 4, 1, 0, 0, 8, 6, 0x50, 0]);
+        finish_config(cfg, 3);
+        let r = rig(f);
+        r.host.command(Cmd::Plug);
+        let u = r.stage("mouse");
+        assert!(u["interfaces"][1]["error"].as_str().unwrap().contains("unsupported USB"));
+        assert!(u["interfaces"][2]["error"].as_str().unwrap().contains("MSC"));
+        r.host.firmware_said(proto::USB_IN, &[0x87, 0, 0, 4, 0, 0, 0, 0, 0]);
+        r.host.firmware_said(proto::USB_IN, &[0x83, 1, 1, 2, 3]);
+        let u = r.wait("only declared HID endpoint is decoded", |u| u["mouse"]["buttons"] == json!([1]));
+        assert_eq!(u["typed"], "");
+    }
+
+    #[test]
+    fn a_configuration_beyond_512_bytes_enumerates_its_late_hid_descriptor() {
+        let mut f = composite_fake(&[(5, 0x83, hid::test_support::mouse())]);
+        let cfg = f.configuration.as_mut().unwrap();
+        for _ in 0..8 {
+            let mut vendor = vec![0; 100];
+            vendor[0] = 100;
+            vendor[1] = 0x40;
+            cfg.splice(18..18, vendor);
+        }
+        finish_config(cfg, 1);
+        let r = rig(f);
+        r.host.command(Cmd::Plug);
+        let u = r.stage("mouse");
+        assert_eq!(u["interfaces"][0]["report_length"], hid::test_support::mouse().len());
+        r.host.firmware_said(proto::USB_IN, &[0x83, 2, 1, 2, 3]);
+        r.wait("late HID endpoint", |u| u["mouse"]["buttons"] == json!([2]));
+    }
+
+    #[test]
+    fn keyboard_and_msc_interfaces_keep_independent_endpoints_and_drivers() {
+        let mut f = composite_fake(&[(4, 0x84, hid::test_support::keyboard())]);
+        f.disk = volume(4);
+        let cfg = f.configuration.as_mut().unwrap();
+        cfg.extend_from_slice(&msc_config()[9..]);
+        finish_config(cfg, 2);
+        let r = rig(f);
+        r.host.command(Cmd::Plug);
+        let u = r.stage("mounted");
+        assert_eq!(u["device"]["class"], "composite");
+        assert_eq!(u["hid"]["keyboard"], true);
+        r.host.firmware_said(proto::USB_IN, &[0x84, 0, 0, 4, 0, 0, 0, 0, 0]);
+        r.host.command(Cmd::List);
+        let u = r.wait("disk and typed key", |u| {
+            u["typed"] == "a" && u["disk"]["files"].as_array().is_some_and(|f| !f.is_empty())
+        });
+        assert_eq!(u["disk"]["files"][0]["name"], "hello.txt");
+        assert_eq!(u["keys_down"], json!([4]));
+    }
+
+    #[test]
+    fn endpoint_closure_clears_hid_state_and_old_boot_reports_are_ignored() {
+        let (_, rx) = mpsc::channel();
+        let mut host = Host::new(rx, Arc::new(|_, _| {}), Arc::new(|_| {}));
+        let f = composite_fake(&[(5, 0x83, hid::test_support::keyboard())]);
+        host.parse_config(f.configuration.as_ref().unwrap()).unwrap();
+        host.hid.insert(
+            5,
+            HidInterface {
+                layout: Some(HidLayout::Report(hid::Descriptor::parse(&hid::test_support::keyboard()).unwrap())),
+                error: String::new(),
+            },
+        );
+        host.cable = true;
+        host.pullup = true;
+        host.stage = Stage::Keyboard;
+        host.apply(Ev::In(0x83, vec![2, 0, 4, 0, 0, 0, 0, 0]));
+        assert_eq!(host.snapshot()["usb"]["keys_down"], json!([4]));
+        host.apply(Ev::Dev(DEV_EP_CLOSE, 0x83));
+        assert_eq!(host.snapshot()["usb"]["keys_down"], json!([]));
+        host.apply(Ev::In(0x83, vec![0, 0, 52, 0, 0, 0, 0, 0]));
+        assert!(host.dead.is_empty(), "a closed endpoint cannot produce input");
+        host.apply(Ev::Dev(DEV_EP_OPEN, 0x83));
+        host.apply(Ev::In(0x83, vec![0, 0, 52, 0, 0, 0, 0, 0]));
+        assert!(!host.dead.is_empty(), "a new endpoint can carry reports again");
+        host.apply(Ev::Dev(DEV_EP_CLOSE, 0xff));
+        host.apply(Ev::In(0x83, vec![0, 0, 8, 0, 0, 0, 0, 0]));
+        assert_eq!(host.typed, "A", "closing all endpoints must also ignore stale reports");
+        host.apply(Ev::Rebooted);
+        host.apply(Ev::In(0x83, vec![0, 0, 8, 0, 0, 0, 0, 0]));
+        assert_eq!(host.typed, "A");
+        assert!(host.hid_states.is_empty() && host.dead.is_empty());
+    }
+
+    #[test]
+    fn endpoint_closure_is_published_before_reopened_counters_can_overtake_the_old_state() {
+        let (_, rx) = mpsc::channel();
+        let snapshots = Arc::new(Mutex::new(Vec::new()));
+        let output = snapshots.clone();
+        let mut host = Host::new(rx, Arc::new(|_, _| {}), Arc::new(move |j| output.lock().unwrap().push(j)));
+        let f = composite_fake(&[(5, 0x83, hid::test_support::mouse())]);
+        host.parse_config(f.configuration.as_ref().unwrap()).unwrap();
+        host.hid.insert(
+            5,
+            HidInterface {
+                layout: Some(HidLayout::Report(hid::Descriptor::parse(&hid::test_support::mouse()).unwrap())),
+                error: String::new(),
+            },
+        );
+        host.cable = true;
+        host.pullup = true;
+        host.stage = Stage::Mouse;
+        host.apply(Ev::In(0x83, vec![1, 10, 0, 0]));
+        host.apply(Ev::Dev(DEV_EP_CLOSE, 0x83));
+        {
+            let emitted = snapshots.lock().unwrap();
+            assert_eq!(emitted.len(), 2);
+            assert_eq!(emitted[0]["usb"]["hid"]["reports"][0]["mouse"]["sequence"], 1);
+            assert_eq!(emitted[1]["usb"]["hid"]["reports"], json!([]));
+            assert_eq!(emitted[1]["usb"]["mouse"]["buttons"], json!([]));
+        }
+        host.apply(Ev::Dev(DEV_EP_OPEN, 0x83));
+        for _ in 0..3 {
+            host.apply(Ev::In(0x83, vec![1, 10, 0, 0]));
+        }
+        host.publish(true);
+        let emitted = snapshots.lock().unwrap();
+        assert_eq!(emitted.last().unwrap()["usb"]["hid"]["reports"][0]["mouse"]["sequence"], 3);
+        assert_eq!(emitted.last().unwrap()["usb"]["hid"]["reports"][0]["mouse"]["total"]["x"], 30);
+    }
+
+    #[test]
+    fn closing_the_mouse_endpoint_preserves_the_keyboards_pending_accent() {
+        let (_, rx) = mpsc::channel();
+        let mut host = Host::new(rx, Arc::new(|_, _| {}), Arc::new(|_| {}));
+        let keyboard = hid::test_support::keyboard();
+        let mouse = hid::test_support::mouse();
+        let f = composite_fake(&[(5, 0x83, keyboard.clone()), (7, 0x86, mouse.clone())]);
+        host.parse_config(f.configuration.as_ref().unwrap()).unwrap();
+        for (number, report) in [(5, keyboard), (7, mouse)] {
+            host.hid.insert(
+                number,
+                HidInterface {
+                    layout: Some(HidLayout::Report(hid::Descriptor::parse(&report).unwrap())),
+                    error: String::new(),
+                },
+            );
+        }
+        host.cable = true;
+        host.pullup = true;
+        host.stage = Stage::Hid;
+        host.apply(Ev::In(0x83, vec![0, 0, 52, 0, 0, 0, 0, 0]));
+        host.apply(Ev::In(0x86, vec![1, 1, 2, 3]));
+        assert_eq!(host.dead.len(), 1);
+        host.apply(Ev::Dev(DEV_EP_CLOSE, 0x86));
+        assert_eq!(host.snapshot()["usb"]["keys_down"], json!([52]));
+        assert_eq!(host.snapshot()["usb"]["mouse"]["buttons"], json!([]));
+        host.apply(Ev::In(0x83, vec![0, 0, 8, 0, 0, 0, 0, 0]));
+        assert_eq!(host.typed, "é");
+        assert!(host.dead.is_empty());
+    }
+
+    #[test]
+    fn an_out_of_range_axis_keeps_buttons_other_axes_and_keyboard_input() {
+        let mut descriptor = hid::test_support::keyboard();
+        descriptor.extend(hid::test_support::mouse());
+        let r = rig(composite_fake(&[(3, 0x85, descriptor)]));
+        r.host.command(Cmd::Plug);
+        r.stage("hid");
+        r.host.firmware_said(proto::USB_IN, &[0x85, 0, 0, 4, 0, 0, 0, 0, 0, 1, 1, 2, 3]);
+        r.wait("valid two-collection report", |u| u["typed"] == "a" && u["mouse"]["buttons"] == json!([1]));
+        r.host.firmware_said(proto::USB_IN, &[0x85, 0, 0, 5, 0, 0, 0, 0, 0, 2, 128, 2, 3]);
+        let u = r.wait("usable fields of the combined report", |u| u["typed"] == "ab");
+        assert_eq!(u["keys_down"], json!([5]));
+        assert_eq!(u["mouse"]["buttons"], json!([2]));
+        let mouse = &u["hid"]["reports"][1]["mouse"];
+        assert_eq!(mouse["relative"], json!({"y": 2, "wheel": 3}));
+        assert_eq!(mouse["total"], json!({"x": 1, "y": 4, "wheel": 6}));
+        assert_eq!(u["interfaces"][0]["error"], "");
+    }
+
+    #[test]
+    fn two_keyboard_collections_in_one_interface_keep_their_own_modifiers() {
+        let mut descriptor = hid::test_support::numbered(hid::test_support::keyboard(), 47);
+        descriptor.extend(hid::test_support::numbered(hid::test_support::keyboard(), 89));
+        let r = rig(composite_fake(&[(3, 0x85, descriptor)]));
+        r.host.command(Cmd::Plug);
+        r.stage("keyboard");
+        r.host.firmware_said(proto::USB_IN, &[0x85, 47, 2, 0, 4, 0, 0, 0, 0, 0]);
+        r.host.firmware_said(proto::USB_IN, &[0x85, 89, 0, 0, 4, 0, 0, 0, 0, 0]);
+        r.wait("collection-specific modifiers", |u| u["typed"] == "Aa");
+        r.host.firmware_said(proto::USB_IN, &[0x85, 47, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let u = r.wait("first collection released, second still held", |u| {
+            u["modifiers"] == 0 && u["keys_down"] == json!([4])
+        });
+        assert_eq!(u["hid"]["reports"][1]["keys_down"], json!([4]));
+    }
+
+    #[test]
+    fn minimal_boot_keyboard_uses_boot_layout_and_report_protocol_stall_keeps_declared_layout() {
+        for (descriptor, protocol, report) in [
+            (hid::test_support::hex("05 01 09 06 a1 01 c0"), "boot", vec![0, 0, 4, 0, 0, 0, 0, 0]),
+            (
+                hid::test_support::numbered(hid::test_support::keyboard(), 37),
+                "report",
+                vec![37, 0, 0, 4, 0, 0, 0, 0, 0],
+            ),
+        ] {
+            let mut f = Fake::new(vec![]);
+            f.keyboard = true;
+            f.protocol_stall = true;
+            let mut configuration = kbd_config();
+            configuration[25..27].copy_from_slice(&(descriptor.len() as u16).to_le_bytes());
+            f.configuration = Some(configuration);
+            f.reports.insert(0, descriptor);
+            let r = rig(f);
+            r.host.command(Cmd::Plug);
+            let u = r.stage("keyboard");
+            assert_eq!(u["interfaces"][0]["hid_protocol"], protocol);
+            let packet = [&[0x81][..], &report].concat();
+            r.host.firmware_said(proto::USB_IN, &packet);
+            r.wait("keyboard types after SET_PROTOCOL stalls", |u| u["typed"] == "a");
+        }
+    }
+
+    #[test]
+    fn a_minimal_non_boot_interface_stays_plugged_in() {
+        let r = rig(composite_fake(&[(5, 0x83, hid::test_support::hex("05 01 09 06 a1 01 c0"))]));
+        r.host.command(Cmd::Plug);
+        let u = r.stage("mounted");
+        assert_eq!(u["cable"], true);
+        assert_eq!(u["hid"]["keyboard"], false);
+        assert_eq!(u["error"], "");
+    }
+
+    #[test]
+    fn button_caps_apply_to_both_declared_and_live_snapshot_values() {
+        let descriptor =
+            hid::test_support::hex("05 01 09 02 a1 01 05 09 19 00 2a ff ff 15 00 27 ff ff 00 00 75 10 95 02 81 00 c0");
+        let r = rig(composite_fake(&[(5, 0x83, descriptor)]));
+        r.host.command(Cmd::Plug);
+        let u = r.stage("mouse");
+        assert_eq!(u["interfaces"][0]["buttons"], json!((1..=32).collect::<Vec<_>>()));
+        r.host.firmware_said(proto::USB_IN, &[0x83, 1, 0, 0xff, 0xff]);
+        let u = r.wait("live mouse report", |u| u["hid"]["reports"].as_array().unwrap().len() == 1);
+        assert_eq!(u["mouse"]["buttons"], json!([1]));
+        assert_eq!(u["hid"]["reports"][0]["mouse"]["presses"], json!({"1": 1}));
+    }
+
+    #[test]
+    fn quick_click_edges_survive_thinning_and_overflow_preserves_all_state() {
+        let (_, rx) = mpsc::channel();
+        let mut host = Host::new(rx, Arc::new(|_, _| {}), Arc::new(|_| {}));
+        let f = composite_fake(&[(5, 0x83, hid::test_support::mouse())]);
+        host.parse_config(f.configuration.as_ref().unwrap()).unwrap();
+        host.hid.insert(
+            5,
+            HidInterface {
+                layout: Some(HidLayout::Report(hid::Descriptor::parse(&hid::test_support::mouse()).unwrap())),
+                error: String::new(),
+            },
+        );
+        host.cable = true;
+        host.pullup = true;
+        host.stage = Stage::Mouse;
+        host.apply(Ev::In(0x83, vec![5, 0, 0, 0]));
+        host.apply(Ev::In(0x83, vec![0, 0, 0, 0]));
+        let u = host.snapshot()["usb"].clone();
+        assert_eq!(u["mouse"]["buttons"], json!([]));
+        assert_eq!(u["hid"]["reports"][0]["mouse"]["presses"], json!({"1":1,"3":1}));
+        assert_eq!(u["hid"]["reports"][0]["mouse"]["releases"], json!({"1":1,"3":1}));
+        assert_eq!(u["hid"]["reports"][0]["mouse"]["sequence"], 2);
+        host.hid_states.values_mut().next().unwrap().totals.insert(hid::USAGE_X, i64::MAX);
+        let before = host.hid_states.clone();
+        host.report(5, 0x83, &[1, 1, 0, 0]);
+        assert!(host.hid_states == before);
+        assert!(host.hid[&5].error.contains("overflow"));
+        host.hid_states.values_mut().next().unwrap().presses.insert(2, u64::MAX);
+        let before = host.hid_states.clone();
+        host.report(5, 0x83, &[2, 0, 0, 0]);
+        assert!(host.hid_states == before);
+        assert!(host.hid[&5].error.contains("counter overflow"));
     }
 
     #[test]

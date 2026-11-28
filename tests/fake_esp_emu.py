@@ -55,6 +55,7 @@ import os
 import struct
 import sys
 import zlib
+from pathlib import Path
 
 import kd
 
@@ -336,6 +337,39 @@ async def main() -> int:
                         7, 5, 0x81, 3, 8, 0, 10])
     kbd_device = bytes([18, 1, 0, 2, 0, 0, 0, 64, 0x6A, 0x30, 0x35, 0x12, 0, 1, 1, 2, 0, 1])
 
+    usb_mode = os.environ.get("FAKE_USB_MODE")
+    report_descriptors = {0: bytes([5, 1, 9, 6, 0xA1, 1, 0xC0])}
+    report_sources = {"key": (0x81, None)}
+    if usb_mode is not None:
+        descriptors = Path(__file__).parent / "fixtures" / "hid"
+        keyboard_report = bytes.fromhex((descriptors / "keyboard.hex").read_text())
+        mouse_report = bytes.fromhex((descriptors / "mouse.hex").read_text())
+        if usb_mode == "keyboard":
+            hid_interfaces = [(0, 0x81, keyboard_report, {"key": None}, 1, 1)]
+        elif usb_mode == "mouse":
+            hid_interfaces = [(3, 0x85, mouse_report, {"mouse": None}, 0, 0)]
+        elif usb_mode == "separate":
+            hid_interfaces = [(7, 0x86, mouse_report, {"mouse": None}, 0, 0),
+                              (4, 0x83, keyboard_report, {"key": None}, 0, 0)]
+        elif usb_mode == "shared":
+            report_ids = {"key": 37, "mouse": 193}
+            report = bytes([0x85, report_ids["key"]]) + keyboard_report + bytes([0x85, report_ids["mouse"]]) + mouse_report
+            hid_interfaces = [(6, 0x84, report, report_ids, 0, 0)]
+        else:
+            raise ValueError(f"unknown fake USB mode: {usb_mode}")
+        config = bytearray([9, 2, 0, 0, len(hid_interfaces), 1, 0, 0x80, 50])
+        report_descriptors = {}
+        report_sources = {}
+        for number, endpoint, report, ids, subclass, protocol in hid_interfaces:
+            config.extend([9, 4, number, 0, 1, 3, subclass, protocol, 0])
+            config.extend(bytes([9, 0x21, 0x11, 1, 0, 1, 0x22]) + len(report).to_bytes(2, "little"))
+            config.extend([7, 5, endpoint, 3, 64, 0, 10])
+            report_descriptors[number] = report
+            for name, report_id in ids.items():
+                report_sources[name] = endpoint, report_id
+        config[2:4] = len(config).to_bytes(2, "little")
+        kbd_config = bytes(config)
+
     def usb_in(ep, data):
         writer.write(kd.encode(kd.USB_IN, bytes([ep]) + data))
 
@@ -353,9 +387,12 @@ async def main() -> int:
                 usb_in(0x80, d[i:i + 64])
             if len(d) % 64 == 0 and len(d) < wl:
                 usb_in(0x80, b"")
-        elif kind == 0x81 and req == 6:
-            d = bytes([5, 1, 9, 6, 0xA1, 1, 0xC0])[:wl]
-            usb_in(0x80, d)
+        elif kind == 0x81 and req == 6 and vtype == 0x22 and s[4] in report_descriptors:
+            d = report_descriptors[s[4]][:wl]
+            for i in range(0, len(d), 64):
+                usb_in(0x80, d[i:i + 64])
+            if len(d) % 64 == 0 and len(d) < wl:
+                usb_in(0x80, b"")
         elif kind in (0x00, 0x21):
             usb_in(0x80, b"")                                                      # status of a write
         else:
@@ -444,7 +481,15 @@ async def main() -> int:
                 print("spammed", flush=True)
             elif line.startswith("key "):                    # MODS KEY: a boot keyboard's report
                 mods, key = (int(x) for x in line.split()[1:3])
-                usb_in(0x81, bytes([mods, 0, key, 0, 0, 0, 0, 0]))
+                endpoint, report_id = report_sources["key"]
+                prefix = b"" if report_id is None else bytes([report_id])
+                usb_in(endpoint, prefix + bytes([mods, 0, key, 0, 0, 0, 0, 0]))
+                await writer.drain()
+            elif line.startswith("mouse "):
+                buttons, x, y, wheel = (int(x) for x in line.split()[1:5])
+                endpoint, report_id = report_sources["mouse"]
+                prefix = b"" if report_id is None else bytes([report_id])
+                usb_in(endpoint, prefix + struct.pack("Bbbb", buttons, x, y, wheel))
                 await writer.drain()
             elif line.startswith("cut "):                    # N: a frame a reset cuts short
                 writer.write(b"KD" + struct.pack("<BI", 0x12, int(line.split()[1])) + bytes(4))
